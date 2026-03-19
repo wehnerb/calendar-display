@@ -371,10 +371,15 @@ function parseDatetimeProp(value, params) {
     return { date, allDay: false, dateStr: toLocalDateStr(date) };
   }
 
-  // Local time with TZID parameter: DTSTART;TZID=America/Chicago:20260318T090000
+  // Local time with TZID parameter.
+  // Exchange emits Windows timezone names wrapped in quotes, e.g.:
+  //   DTSTART;TZID="Central Standard Time":20260318T090000
+  // Strip quotes and map Windows names to IANA names before parsing.
   const tzidMatch = params.match(/TZID=([^;]+)/i);
   if (tzidMatch) {
-    const date = parseLocalDateTimeInZone(value, tzidMatch[1]);
+    const rawTzid  = tzidMatch[1].replace(/^"|"$/g, '').trim();
+    const ianaZone = windowsToIana(rawTzid);
+    const date     = parseLocalDateTimeInZone(value, ianaZone);
     if (!date) return null;
     return { date, allDay: false, dateStr: toLocalDateStr(date) };
   }
@@ -467,6 +472,49 @@ function unescapeIcs(str) {
     .replace(/\\\\/g, '\\')
     .replace(/\\;/g,  ';')
     .replace(/\\,/g,  ',');
+}
+
+// Maps Windows timezone names (as used by Exchange/Outlook) to IANA timezone
+// identifiers accepted by Intl.DateTimeFormat. Covers all US zones plus common
+// international zones that may appear in department calendars.
+// If the name is already a valid IANA zone (or unrecognized), it is returned
+// unchanged — Intl.DateTimeFormat will throw and the event will be skipped
+// with a console.error rather than silently producing a wrong time.
+function windowsToIana(windowsTz) {
+  const map = {
+    // United States
+    'Eastern Standard Time':   'America/New_York',
+    'Eastern Summer Time':     'America/New_York',
+    'Central Standard Time':   'America/Chicago',
+    'Central Summer Time':     'America/Chicago',
+    'Mountain Standard Time':  'America/Denver',
+    'Mountain Summer Time':    'America/Denver',
+    'US Mountain Standard Time': 'America/Phoenix',  // Arizona — no DST
+    'Pacific Standard Time':   'America/Los_Angeles',
+    'Pacific Summer Time':     'America/Los_Angeles',
+    'Alaskan Standard Time':   'America/Anchorage',
+    'Hawaiian Standard Time':  'Pacific/Honolulu',
+    // UTC
+    'UTC':                     'UTC',
+    'Greenwich Standard Time': 'UTC',
+    // Canada
+    'Canada Central Standard Time': 'America/Regina',
+    'Atlantic Standard Time':  'America/Halifax',
+    'Newfoundland Standard Time': 'America/St_Johns',
+    // Europe
+    'GMT Standard Time':       'Europe/London',
+    'Romance Standard Time':   'Europe/Paris',
+    'Central Europe Standard Time': 'Europe/Budapest',
+    'Central European Standard Time': 'Europe/Warsaw',
+    'W. Europe Standard Time': 'Europe/Berlin',
+    'E. Europe Standard Time': 'Europe/Nicosia',
+    // Other common
+    'AUS Eastern Standard Time': 'Australia/Sydney',
+    'Tokyo Standard Time':     'Asia/Tokyo',
+    'China Standard Time':     'Asia/Shanghai',
+  };
+
+  return map[windowsTz] || windowsTz;
 }
 
 
