@@ -78,6 +78,17 @@ const FILTER_CONTAINS = [
   // Example: 'Cancelled',
 ];
 
+// Custom colors for specific all-day event banners.
+// Key: event title (case-insensitive exact match).
+// Each entry overrides the default blue banner style.
+// bg = background color, border = left accent bar, text = text color.
+// Use hex values. Remove an entry to revert that event to the default style.
+const ALLDAY_COLORS = {
+  'A Shift': { bg: '#1a4d2e', border: '#2d8a50', text: '#a8f0be' },
+  'B Shift': { bg: '#2e2e2e', border: '#c0c0c0', text: '#ffffff' },
+  'C Shift': { bg: '#4d1a1a', border: '#c0392b', text: '#f0a8a8' },
+};
+
 
 // =============================================================================
 // MAIN WORKER ENTRY POINT
@@ -542,8 +553,25 @@ function applyFilters(events) {
       if (titleLower.includes(substr.toLowerCase())) return false;
     }
 
-    return true;
+ return true;
   });
+}
+
+// Returns an inline style string for an all-day event banner.
+// If the event title matches an entry in ALLDAY_COLORS (case-insensitive),
+// the custom colors are applied. Otherwise returns an empty string so the
+// default .allday-banner CSS class styles take effect.
+function getAllDayBannerStyle(summary) {
+  const key = Object.keys(ALLDAY_COLORS).find(
+    k => k.toLowerCase() === (summary || '').trim().toLowerCase()
+  );
+  if (!key) return '';
+  const c = ALLDAY_COLORS[key];
+  return (
+    ' style="background:' + c.bg +
+    ';border-left-color:'  + c.border +
+    ';color:'              + c.text + ';"'
+  );
 }
 
 
@@ -914,9 +942,11 @@ function buildSplitLayout(events, displayDates, layout, layoutKey) {
   const todayTimed = todayEvts.filter(e => !e.allDay).sort(sortByStart);
 
   let todayContent = '';
-  for (const e of todayAD) {
+ for (const e of todayAD) {
     todayContent +=
-      '<div class="allday-banner">' + escapeHtml(e.summary || 'All Day') + '</div>';
+      '<div class="allday-banner"' + getAllDayBannerStyle(e.summary) + '>' +
+        escapeHtml(e.summary || 'All Day') +
+      '</div>';
   }
 
   if (todayTimed.length === 0 && todayAD.length === 0) {
@@ -969,7 +999,9 @@ function buildSplitLayout(events, displayDates, layout, layoutKey) {
     let colContent = '';
     for (const e of dayAD) {
       colContent +=
-        '<div class="allday-banner">' + escapeHtml(e.summary || 'All Day') + '</div>';
+        '<div class="allday-banner"' + getAllDayBannerStyle(e.summary) + '>' +
+          escapeHtml(e.summary || 'All Day') +
+        '</div>';
     }
     if (dayTmd.length === 0 && dayAD.length === 0) {
       colContent += '<div class="no-events">No events</div>';
@@ -1084,7 +1116,9 @@ function buildStripLayout(events, displayDates, layout, layoutKey) {
     let sectionBody = '';
     for (const e of dayAD) {
       sectionBody +=
-        '<div class="allday-banner">' + escapeHtml(e.summary || 'All Day') + '</div>';
+        '<div class="allday-banner"' + getAllDayBannerStyle(e.summary) + '>' +
+          escapeHtml(e.summary || 'All Day') +
+        '</div>';
     }
     if (dayTmd.length === 0 && dayAD.length === 0) {
       sectionBody += '<div class="no-events">No events</div>';
