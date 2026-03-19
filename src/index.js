@@ -18,6 +18,14 @@
 //   - Floating timestamps (no Z, no TZID) are treated as Central time
 //   - All-day events (date-only DTSTART) are handled as full-day entries
 //
+// Caching strategy:
+//   - Rendered HTML is cached per layout in the Workers Cache API for
+//     CACHE_SECONDS seconds, matching the page meta-refresh interval.
+//   - This prevents redundant Google Drive fetches and ICS parsing on
+//     every display load. Increment CACHE_VERSION to bust all cached pages.
+//   - Cache-Control: no-store on HTML responses prevents browser caching.
+//     The Workers Cache API handles server-side caching independently.
+//
 // Security:
 //   - Google Drive folder ID stored as Cloudflare Worker secret
 //   - All Google credentials stored as secrets — never in source code
@@ -39,7 +47,13 @@
 const DAYS_TO_SHOW = 5;
 
 // Page auto-refresh interval in seconds. 900 = 15 minutes.
+// Also controls how long rendered HTML is cached in the Workers Cache API.
 const CACHE_SECONDS = 900;
+
+// Increment this integer to immediately invalidate all cached pages.
+// Useful after configuration changes that affect the rendered output,
+// such as updating ALLDAY_COLORS, FILTER_EXACT, or DAYS_TO_SHOW.
+const CACHE_VERSION = 1;
 
 // Filename of the ICS file in the Google Drive folder.
 // Always export and upload with exactly this name.
@@ -112,6 +126,23 @@ export default {
     // wide/full → split view.  split/tri → upcoming strip.
     const useStrip = (layoutKey === 'split' || layoutKey === 'tri');
 
+    // --- Workers Cache API ---
+    // Each layout variant is cached separately using a versioned cache key.
+    // CACHE_VERSION allows instant cache invalidation by incrementing the
+    // constant above — no Cloudflare dashboard action required.
+    const cache    = caches.default;
+    const cacheKey = new Request(
+      'https://calendar-display-cache.internal/v' + CACHE_VERSION +
+      '/' + layoutKey,
+      { method: 'GET' }
+    );
+
+    // Return the cached response immediately if one exists.
+    const cachedResponse = await cache.match(cacheKey);
+    if (cachedResponse) {
+      return cachedResponse;
+    }
+
     try {
 
       // Obtain a Google OAuth2 access token for Drive API access.
@@ -152,7 +183,7 @@ export default {
       const events = applyFilters(allEvents);
 
       // Build the ordered list of date strings to display in Central time.
-      const todayStr    = getTodayString();
+      const todayStr     = getTodayString();
       const displayDates = getDisplayDates(todayStr, DAYS_TO_SHOW);
 
       // Render the appropriate layout design.
@@ -160,7 +191,7 @@ export default {
         ? buildStripLayout(events, displayDates, layout, layoutKey)
         : buildSplitLayout(events, displayDates, layout, layoutKey);
 
-      return new Response(html, {
+      const response = new Response(html, {
         status: 200,
         headers: {
           'Content-Type':           'text/html; charset=utf-8',
@@ -174,6 +205,22 @@ export default {
           // Adding X-Frame-Options: SAMEORIGIN causes immediate white screens.
         },
       });
+
+      // Store the rendered response in the Workers Cache API.
+      // A separate cache-control header on the cloned response tells
+      // Cloudflare's cache how long to keep it — this does not affect
+      // the Cache-Control header returned to the display browser.
+      const responseToCache = new Response(html, {
+        status: 200,
+        headers: {
+          'Content-Type':           'text/html; charset=utf-8',
+          'Cache-Control':          'public, max-age=' + CACHE_SECONDS,
+          'X-Content-Type-Options': 'nosniff',
+        },
+      });
+      await cache.put(cacheKey, responseToCache);
+
+      return response;
 
     } catch (err) {
       // Log full detail server-side; return only a generic message to the
@@ -265,11 +312,14 @@ function toLocalDateStr(date) {
 // Parses a subset of the iCalendar format (RFC 5545) sufficient for display:
 // DTSTART, DTEND, SUMMARY, LOCATION. All-day and timed events are detected.
 //
-// Three DTSTART/DTEND timestamp formats are handled:
+// Four DTSTART/DTEND timestamp formats are handled:
 //   1. UTC:             DTSTART:20260318T150000Z
 //   2. TZID local:      DTSTART;TZID=America/Chicago:20260318T090000
 //   3. All-day (date):  DTSTART;VALUE=DATE:20260318
 //   4. Floating local:  DTSTART:20260318T090000  (no Z, no TZID — treated as Central)
+//
+// Exchange emits Windows timezone names in quotes (e.g. "Central Standard Time").
+// These are stripped of quotes and mapped to IANA names via windowsToIana().
 //
 // Lines may be RFC 5545 "folded" (long lines wrapped with leading whitespace);
 // unfolding is applied before parsing.
@@ -286,9 +336,7 @@ function parseIcs(icsText) {
     const colonIdx = line.indexOf(':');
     if (colonIdx === -1) continue;
 
-    // Property name may include parameters: DTSTART;TZID=America/Chicago
-    // Split on first colon for the name+params portion and the value.
-   // Preserve original case for the params portion — TZID values like
+    // Preserve original case for the params portion — TZID values like
     // "Central Standard Time" must not be uppercased before windowsToIana()
     // looks them up. Only the property name itself is uppercased.
     const rawNamePart = line.substring(0, colonIdx).trim();
@@ -497,35 +545,35 @@ function unescapeIcs(str) {
 function windowsToIana(windowsTz) {
   const map = {
     // United States
-    'Eastern Standard Time':   'America/New_York',
-    'Eastern Summer Time':     'America/New_York',
-    'Central Standard Time':   'America/Chicago',
-    'Central Summer Time':     'America/Chicago',
-    'Mountain Standard Time':  'America/Denver',
-    'Mountain Summer Time':    'America/Denver',
+    'Eastern Standard Time':     'America/New_York',
+    'Eastern Summer Time':       'America/New_York',
+    'Central Standard Time':     'America/Chicago',
+    'Central Summer Time':       'America/Chicago',
+    'Mountain Standard Time':    'America/Denver',
+    'Mountain Summer Time':      'America/Denver',
     'US Mountain Standard Time': 'America/Phoenix',  // Arizona — no DST
-    'Pacific Standard Time':   'America/Los_Angeles',
-    'Pacific Summer Time':     'America/Los_Angeles',
-    'Alaskan Standard Time':   'America/Anchorage',
-    'Hawaiian Standard Time':  'Pacific/Honolulu',
+    'Pacific Standard Time':     'America/Los_Angeles',
+    'Pacific Summer Time':       'America/Los_Angeles',
+    'Alaskan Standard Time':     'America/Anchorage',
+    'Hawaiian Standard Time':    'Pacific/Honolulu',
     // UTC
-    'UTC':                     'UTC',
-    'Greenwich Standard Time': 'UTC',
+    'UTC':                       'UTC',
+    'Greenwich Standard Time':   'UTC',
     // Canada
     'Canada Central Standard Time': 'America/Regina',
-    'Atlantic Standard Time':  'America/Halifax',
+    'Atlantic Standard Time':    'America/Halifax',
     'Newfoundland Standard Time': 'America/St_Johns',
     // Europe
-    'GMT Standard Time':       'Europe/London',
-    'Romance Standard Time':   'Europe/Paris',
+    'GMT Standard Time':         'Europe/London',
+    'Romance Standard Time':     'Europe/Paris',
     'Central Europe Standard Time': 'Europe/Budapest',
     'Central European Standard Time': 'Europe/Warsaw',
-    'W. Europe Standard Time': 'Europe/Berlin',
-    'E. Europe Standard Time': 'Europe/Nicosia',
+    'W. Europe Standard Time':   'Europe/Berlin',
+    'E. Europe Standard Time':   'Europe/Nicosia',
     // Other common
     'AUS Eastern Standard Time': 'Australia/Sydney',
-    'Tokyo Standard Time':     'Asia/Tokyo',
-    'China Standard Time':     'Asia/Shanghai',
+    'Tokyo Standard Time':       'Asia/Tokyo',
+    'China Standard Time':       'Asia/Shanghai',
   };
 
   return map[windowsTz] || windowsTz;
@@ -553,7 +601,7 @@ function applyFilters(events) {
       if (titleLower.includes(substr.toLowerCase())) return false;
     }
 
- return true;
+    return true;
   });
 }
 
@@ -691,7 +739,7 @@ async function findIcsFileId(folderId, filename, accessToken) {
 
   const url =
     'https://www.googleapis.com/drive/v3/files' +
-    '?q='        + encodeURIComponent(query) +
+    '?q='      + encodeURIComponent(query) +
     '&fields=files(id,name)' +
     '&pageSize=1';
 
@@ -942,7 +990,7 @@ function buildSplitLayout(events, displayDates, layout, layoutKey) {
   const todayTimed = todayEvts.filter(e => !e.allDay).sort(sortByStart);
 
   let todayContent = '';
- for (const e of todayAD) {
+  for (const e of todayAD) {
     todayContent +=
       '<div class="allday-banner"' + getAllDayBannerStyle(e.summary) + '>' +
         escapeHtml(e.summary || 'All Day') +
@@ -980,7 +1028,7 @@ function buildSplitLayout(events, displayDates, layout, layoutKey) {
   }
 
   // Format today's header label: "Today — Monday" / "March 18"
-  const todayLong    = formatDateLong(todayStr);          // "Monday, March 18"
+  const todayLong    = formatDateLong(todayStr);
   const commaIdx     = todayLong.indexOf(',');
   const todayDayName = commaIdx !== -1
     ? todayLong.substring(0, commaIdx)
