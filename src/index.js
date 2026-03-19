@@ -85,7 +85,7 @@ const FILTER_CONTAINS = [
 // Use hex values. Remove an entry to revert that event to the default style.
 const ALLDAY_COLORS = {
   'A Shift': { bg: '#1a4d2e', border: '#2d8a50', text: '#a8f0be' },
-  'B Shift': { bg: '#2e2e2e', border: '#c0c0c0', text: '#ffffff' },
+  'B Shift': { bg: '#e8e8e8', border: '#808080', text: '#1a1a1a' },
   'C Shift': { bg: '#4d1a1a', border: '#c0392b', text: '#f0a8a8' },
 };
 
