@@ -1,6 +1,6 @@
 # Calendar Display
 
-A Cloudflare Worker that fetches a `.ics` calendar file from Google Drive and renders it as a styled HTML calendar page for fire station display screens. The calendar file is exported from Outlook and uploaded to a shared Google Drive folder — no technical knowledge is required to update the calendar.
+A Cloudflare Worker that fetches a `.ics` calendar file from Google Drive and renders it as a styled HTML calendar page for fire station display screens. The calendar file is exported from Outlook and uploaded to a shared Google Drive folder automatically at login via an Outlook VBA macro and rclone — no technical knowledge is required to keep the calendar current.
 
 ## Live URLs
 
@@ -44,12 +44,14 @@ https://calendar-display.bwehner.workers.dev/?layout=tri
 
 ## How It Works
 
-1. The Worker authenticates with Google using the shared service account (same account as `slide-timing-proxy` and `daily-message-display`), generating a short-lived OAuth2 access token.
+1. The Worker checks the Workers Cache API for a previously rendered page matching the requested layout. If a valid cached response exists, it is returned immediately — no Google API calls are made.
+1. If no cache hit, the Worker authenticates with Google using the shared service account (same account as `slide-timing-proxy` and `daily-message-display`), generating a short-lived OAuth2 access token.
 1. The Worker searches the configured Google Drive folder for a file named exactly `FFD Calendar Calendar.ics`.
 1. The raw ICS text is fetched from Google Drive server-side. The display browser never contacts Google directly.
 1. The ICS file is parsed into structured event objects. Windows timezone names emitted by Exchange (e.g. `"Central Standard Time"`) are automatically mapped to IANA timezone identifiers.
 1. Filter rules are applied to remove unwanted events before rendering.
-1. A self-contained HTML page is returned. The `meta http-equiv="refresh"` interval is set to `CACHE_SECONDS` (default: 15 minutes).
+1. A self-contained HTML page is returned and stored in the Workers Cache API for `CACHE_SECONDS` seconds.
+1. The `meta http-equiv="refresh"` interval is set to `CACHE_SECONDS`, so the display reloads approximately in sync with the cache expiry.
 
 -----
 
@@ -79,22 +81,25 @@ Current custom colors:
 
 ## Managing the Calendar
 
-### Updating the Calendar
+The calendar is updated automatically each time you log into the department computer. The process runs without any manual steps:
 
-1. In Outlook 2016, open the calendar, go to **File → Save Calendar**.
-1. Set the date range to the desired period and save the file.
-1. Rename the file to exactly `FFD Calendar Calendar.ics`.
-1. Open the **FFD Calendar** folder in Google Drive.
-1. Delete the existing `FFD Calendar Calendar.ics` file.
-1. Upload the new file into the same folder.
+1. Outlook opens and a VBA macro runs automatically, exporting the next 30 days of the FFD Calendar public folder to `U:\Fire\BWehner\FFD Calendar Export\FFD Calendar Calendar.ics`.
+1. Windows Task Scheduler runs rclone approximately 2 minutes after login, uploading the exported file to the FFD Calendar Google Drive folder, replacing the previous version.
+1. The Worker picks up the new file on the next cache expiry (within 15 minutes).
 
-The Worker will pick up the new file automatically on its next refresh cycle (within 15 minutes).
+### Manually Updating the Calendar
 
-### ICS File Requirements
+If the calendar needs to be updated outside of a normal login (e.g. after a significant change was made mid-day), open PowerShell and run:
 
-- The file must be named exactly `FFD Calendar Calendar.ics` — the Worker searches for this exact filename.
-- The file must be placed in the root of the **FFD Calendar** Google Drive folder — subfolders are not searched.
-- The folder must remain shared with the service account email address.
+```
+"U:\Fire\BWehner\FFD Calendar Export\rclone.exe" copyto "U:\Fire\BWehner\FFD Calendar Export\FFD Calendar Calendar.ics" "googledrive:FFD Calendar Calendar.ics" --drive-root-folder-id YOUR_FOLDER_ID
+```
+
+Replace `YOUR_FOLDER_ID` with the value of the `GOOGLE_DRIVE_FOLDER_ID` Cloudflare secret.
+
+### If the Display Is Stale After a Manual Upload
+
+The Worker caches rendered pages for 15 minutes. After a manual upload, the display will automatically show updated data within 15 minutes. If you need it to update immediately, increment `CACHE_VERSION` in `src/index.js` by 1, deploy to staging, test, and merge to main. This instantly invalidates all cached pages.
 
 -----
 
@@ -117,7 +122,8 @@ The top of `src/index.js` contains all values that may need to be changed. No ot
 | Constant | Default | Description |
 |----------|---------|-------------|
 | `DAYS_TO_SHOW` | `5` | Number of days to display starting from today. `wide`/`full`: today panel + next N-1 columns. `split`/`tri`: total days in the strip. |
-| `CACHE_SECONDS` | `900` | Page auto-refresh interval in seconds. 900 = 15 minutes. |
+| `CACHE_SECONDS` | `900` | Page auto-refresh interval in seconds. 900 = 15 minutes. Also controls the Workers Cache API TTL. |
+| `CACHE_VERSION` | `1` | Increment this integer to immediately invalidate all cached pages. Use after any configuration change that affects the rendered output. |
 | `CALENDAR_FILENAME` | `'FFD Calendar Calendar.ics'` | Exact filename of the ICS file in the Drive folder. Must match the uploaded file name exactly. |
 | `DEFAULT_LAYOUT` | `'wide'` | Layout used when no `?layout=` parameter is provided. |
 | `ERROR_RETRY_SECONDS` | `60` | How long the error page waits before auto-retrying. |
@@ -140,6 +146,18 @@ All credentials are stored as Cloudflare Worker secrets and GitHub Actions secre
 | `GOOGLE_DRIVE_FOLDER_ID` | ID of the Google Drive folder containing the ICS file. Found in the folder URL after `/folders/`. |
 
 The Google Drive folder must be shared with the service account email address with at least **Viewer** access.
+
+-----
+
+## Automatic Calendar Upload — Setup Reference
+
+The automatic upload system consists of three components. See `FFD Calendar Export Setup.txt` in `U:\Fire\BWehner\FFD Calendar Export\` for full setup instructions if this needs to be configured on a new computer.
+
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| Outlook VBA macro | Outlook VBA editor → ThisOutlookSession | Exports FFD Calendar to ICS on Outlook startup |
+| rclone.exe | `U:\Fire\BWehner\FFD Calendar Export\rclone.exe` | Uploads ICS file to Google Drive |
+| Windows Task Scheduler | Task Scheduler → FFD Calendar Export and Upload | Runs rclone 2 minutes after login |
 
 -----
 
@@ -175,5 +193,5 @@ Use the Cloudflare dashboard **Deployments** tab for immediate stabilization, th
 - All calendar content (event titles, locations) is HTML-escaped before injection into pages to prevent XSS.
 - `X-Frame-Options` is intentionally **not** set — this Worker is loaded as a full-screen iframe by the display system. Adding `SAMEORIGIN` would cause immediate white screens on every station display.
 - The ICS file is fetched server-side from Google Drive. The display browser never contacts Google directly.
-- `Cache-Control: no-store` is set on all HTML responses to prevent browser caching.
+- `Cache-Control: no-store` is set on all HTML responses to prevent browser caching. The Workers Cache API handles server-side caching independently.
 - The Google Drive folder ID is stored as a Worker secret, not in source code.
