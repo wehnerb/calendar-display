@@ -1,6 +1,6 @@
 # Calendar Display
 
-A Cloudflare Worker that fetches a `.ics` calendar file from Google Drive and renders it as a styled HTML calendar page for fire station display screens. The calendar file is exported from Outlook and uploaded to a shared Google Drive folder automatically at login via an Outlook VBA macro and rclone — no technical knowledge is required to keep the calendar current.
+A Cloudflare Worker that fetches a `.ics` calendar file from Nextcloud via WebDAV and renders it as a styled HTML calendar page for fire station display screens. The calendar file is exported from Outlook automatically when Outlook opens and synced to Nextcloud via the Nextcloud desktop app — no technical knowledge is required to keep the calendar current.
 
 ## Live URLs
 
@@ -44,10 +44,9 @@ https://calendar-display.bwehner.workers.dev/?layout=tri
 
 ## How It Works
 
-1. The Worker checks the Workers Cache API for a previously rendered page matching the requested layout. If a valid cached response exists, it is returned immediately — no Google API calls are made.
-1. If no cache hit, the Worker authenticates with Google using the shared service account (same account as `slide-timing-proxy` and `daily-message-display`), generating a short-lived OAuth2 access token.
-1. The Worker searches the configured Google Drive folder for a file named exactly `FFD Calendar Calendar.ics`.
-1. The raw ICS text is fetched from Google Drive server-side. The display browser never contacts Google directly.
+1. The Worker checks the Workers Cache API for a previously rendered page matching the requested layout. If a valid cached response exists, it is returned immediately — no Nextcloud requests are made.
+1. If no cache hit, the Worker fetches the ICS file from Nextcloud via WebDAV using HTTP Basic authentication with a Nextcloud app password.
+1. The raw ICS text is fetched server-side. The display browser never contacts Nextcloud directly.
 1. The ICS file is parsed into structured event objects. Windows timezone names emitted by Exchange (e.g. `"Central Standard Time"`) are automatically mapped to IANA timezone identifiers.
 1. Filter rules are applied to remove unwanted events before rendering.
 1. A self-contained HTML page is returned and stored in the Workers Cache API for `CACHE_SECONDS` seconds.
@@ -84,22 +83,18 @@ Current custom colors:
 The calendar is updated automatically each time you log into the department computer. The process runs without any manual steps:
 
 1. Outlook opens and a VBA macro runs automatically, exporting the next 30 days of the FFD Calendar public folder to `U:\Fire\BWehner\FFD Calendar Export\FFD Calendar Calendar.ics`.
-1. Windows Task Scheduler runs rclone approximately 2 minutes after login, uploading the exported file to the FFD Calendar Google Drive folder, replacing the previous version.
-1. The Worker picks up the new file on the next cache expiry (within 15 minutes).
+1. The Nextcloud desktop app syncs the FFD Calendar Export folder to Nextcloud automatically.
+1. The Worker fetches the updated file from Nextcloud on the next cache expiry (within 15 minutes).
 
 ### Manually Updating the Calendar
 
-If the calendar needs to be updated outside of a normal login (e.g. after a significant change was made mid-day), open PowerShell and run:
+If the calendar needs to be updated outside of a normal login (e.g. after a significant change was made mid-day):
 
-```
-"U:\Fire\BWehner\FFD Calendar Export\rclone.exe" copyto "U:\Fire\BWehner\FFD Calendar Export\FFD Calendar Calendar.ics" "googledrive:FFD Calendar Calendar.ics" --drive-root-folder-id YOUR_FOLDER_ID
-```
+1. Open the VBA editor in Outlook (Developer tab → Visual Basic).
+2. Click anywhere inside `Application_Startup` and press **F5** to run the macro manually.
+3. The Nextcloud desktop app will sync the updated file automatically within a few seconds.
 
-Replace `YOUR_FOLDER_ID` with the value of the `GOOGLE_DRIVE_FOLDER_ID` Cloudflare secret.
-
-### If the Display Is Stale After a Manual Upload
-
-The Worker caches rendered pages for 15 minutes. After a manual upload, the display will automatically show updated data within 15 minutes. If you need it to update immediately, increment `CACHE_VERSION` in `src/index.js` by 1, deploy to staging, test, and merge to main. This instantly invalidates all cached pages.
+The Worker will pick up the new file within 15 minutes. To force an immediate cache refresh, increment `CACHE_VERSION` in `src/index.js` by 1, deploy to staging, test, and merge to main.
 
 -----
 
@@ -124,7 +119,6 @@ The top of `src/index.js` contains all values that may need to be changed. No ot
 | `DAYS_TO_SHOW` | `5` | Number of days to display starting from today. `wide`/`full`: today panel + next N-1 columns. `split`/`tri`: total days in the strip. |
 | `CACHE_SECONDS` | `900` | Page auto-refresh interval in seconds. 900 = 15 minutes. Also controls the Workers Cache API TTL. |
 | `CACHE_VERSION` | `1` | Increment this integer to immediately invalidate all cached pages. Use after any configuration change that affects the rendered output. |
-| `CALENDAR_FILENAME` | `'FFD Calendar Calendar.ics'` | Exact filename of the ICS file in the Drive folder. Must match the uploaded file name exactly. |
 | `DEFAULT_LAYOUT` | `'wide'` | Layout used when no `?layout=` parameter is provided. |
 | `ERROR_RETRY_SECONDS` | `60` | How long the error page waits before auto-retrying. |
 | `FILTER_EXACT` | See code | Event titles that must match exactly to be excluded. |
@@ -141,23 +135,20 @@ All credentials are stored as Cloudflare Worker secrets and GitHub Actions secre
 |--------|-------------|
 | `CLOUDFLARE_API_TOKEN` | Cloudflare API token with Workers edit permissions. |
 | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account ID. |
-| `GOOGLE_SERVICE_ACCOUNT_EMAIL` | Service account email — shared with `slide-timing-proxy` and `daily-message-display`. |
-| `GOOGLE_PRIVATE_KEY` | RSA private key from Google Cloud JSON key file — shared with `slide-timing-proxy` and `daily-message-display`. |
-| `GOOGLE_DRIVE_FOLDER_ID` | ID of the Google Drive folder containing the ICS file. Found in the folder URL after `/folders/`. |
-
-The Google Drive folder must be shared with the service account email address with at least **Viewer** access.
+| `NEXTCLOUD_URL` | Full WebDAV URL to the ICS file on Nextcloud. Format: `https://fileshare.fargond.gov/remote.php/dav/files/USERNAME/FFD%20Calendar%20Export/FFD%20Calendar%20Calendar.ics` |
+| `NEXTCLOUD_USERNAME` | Nextcloud login username (shown when creating an app password — not the display name). |
+| `NEXTCLOUD_PASSWORD` | Nextcloud app password. Generate at: Nextcloud → Settings → Security → Devices & sessions → Create new app password. Use an app password rather than the account password so it can be revoked independently. |
 
 -----
 
-## Automatic Calendar Upload — Setup Reference
+## Automatic Calendar Export — Setup Reference
 
-The automatic upload system consists of three components. See `FFD Calendar Export Setup.txt` in `U:\Fire\BWehner\FFD Calendar Export\` for full setup instructions if this needs to be configured on a new computer.
+The calendar export system consists of two components. See `FFD Calendar Export Setup.txt` in `U:\Fire\BWehner\FFD Calendar Export\` for full setup instructions if this needs to be configured on a new computer.
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
 | Outlook VBA macro | Outlook VBA editor → ThisOutlookSession | Exports FFD Calendar to ICS on Outlook startup |
-| rclone.exe | `U:\Fire\BWehner\FFD Calendar Export\rclone.exe` | Uploads ICS file to Google Drive |
-| Windows Task Scheduler | Task Scheduler → FFD Calendar Export and Upload | Runs rclone 2 minutes after login |
+| Nextcloud desktop app | Installed on department computer | Syncs FFD Calendar Export folder to Nextcloud automatically |
 
 -----
 
@@ -192,6 +183,6 @@ Use the Cloudflare dashboard **Deployments** tab for immediate stabilization, th
 - URL parameters are sanitized before use.
 - All calendar content (event titles, locations) is HTML-escaped before injection into pages to prevent XSS.
 - `X-Frame-Options` is intentionally **not** set — this Worker is loaded as a full-screen iframe by the display system. Adding `SAMEORIGIN` would cause immediate white screens on every station display.
-- The ICS file is fetched server-side from Google Drive. The display browser never contacts Google directly.
+- The ICS file is fetched server-side from Nextcloud. The display browser never contacts Nextcloud directly.
+- A Nextcloud app password is used rather than the account password, so the credential can be revoked independently without affecting the Nextcloud account.
 - `Cache-Control: no-store` is set on all HTML responses to prevent browser caching. The Workers Cache API handles server-side caching independently.
-- The Google Drive folder ID is stored as a Worker secret, not in source code.
