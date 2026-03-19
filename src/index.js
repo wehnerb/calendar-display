@@ -67,10 +67,9 @@ const ERROR_RETRY_SECONDS = 60;
 // Use for titles that could appear as substrings in legitimate event names.
 // Example: 'A Shift' will NOT filter 'A Shift Overtime' — add both if needed.
 const FILTER_EXACT = [
-  'A Shift',
-  'B Shift',
-  'C Shift',
-  'D Shift',
+  // 'A Shift', // Added "//" at the beginning of this line to remove this from a filter, but keep the syntax
+  // 'B Shift', // Added "//" at the beginning of this line to remove this from a filter, but keep the syntax
+  // 'C Shift', // Added "//" at the beginning of this line to remove this from a filter, but keep the syntax
 ];
 
 // Event titles to exclude when the title CONTAINS this string anywhere (case-insensitive).
