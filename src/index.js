@@ -1,8 +1,8 @@
 // =============================================================================
 // calendar-display — Cloudflare Worker
 // =============================================================================
-// Fetches a .ics calendar file from Google Drive and renders it as a styled
-// HTML calendar page for fire station displays.
+// Fetches a .ics calendar file from Nextcloud via WebDAV and renders it as a
+// styled HTML calendar page for fire station displays.
 //
 // Two layout designs based on the ?layout= URL parameter:
 //   wide / full  → Split view: today's events in a left panel,
@@ -21,18 +21,24 @@
 // Caching strategy:
 //   - Rendered HTML is cached per layout in the Workers Cache API for
 //     CACHE_SECONDS seconds, matching the page meta-refresh interval.
-//   - This prevents redundant Google Drive fetches and ICS parsing on
+//   - This prevents redundant Nextcloud fetches and ICS parsing on
 //     every display load. Increment CACHE_VERSION to bust all cached pages.
 //   - Cache-Control: no-store on HTML responses prevents browser caching.
 //     The Workers Cache API handles server-side caching independently.
 //
+// Calendar update workflow:
+//   - Outlook VBA macro exports FFD Calendar to a local folder on startup.
+//   - Nextcloud desktop app syncs that folder automatically.
+//   - Worker fetches the ICS file from Nextcloud via WebDAV on each cache miss.
+//   - No manual upload steps or scheduled tasks are required.
+//
 // Security:
-//   - Google Drive folder ID stored as Cloudflare Worker secret
-//   - All Google credentials stored as secrets — never in source code
+//   - Nextcloud credentials stored as Cloudflare Worker secrets — never in code
+//   - HTTP Basic auth used for WebDAV; app password rather than account password
 //   - URL parameters sanitized before use
 //   - All calendar content HTML-escaped before injection into pages
 //   - No X-Frame-Options header — loaded as full-screen iframe by display system
-//   - ICS file fetched server-side; display browser never contacts Google Drive
+//   - ICS file fetched server-side; display browser never contacts Nextcloud
 // =============================================================================
 
 
@@ -55,10 +61,6 @@ const CACHE_SECONDS = 900;
 // such as updating ALLDAY_COLORS, FILTER_EXACT, or DAYS_TO_SHOW.
 const CACHE_VERSION = 1;
 
-// Filename of the ICS file in the Google Drive folder.
-// Always export and upload with exactly this name.
-const CALENDAR_FILENAME = 'FFD Calendar Calendar.ics';
-
 // Default layout when no ?layout= parameter is provided.
 // Options: 'full', 'wide', 'split', 'tri'
 const DEFAULT_LAYOUT = 'wide';
@@ -70,9 +72,6 @@ const LAYOUTS = {
   split: { width: 852,  height: 720  },
   tri:   { width: 558,  height: 720  },
 };
-
-// Google OAuth2 scope for Drive read access.
-const GOOGLE_AUTH_SCOPE = 'https://www.googleapis.com/auth/drive.readonly';
 
 // How long the error/retry page waits before reloading (seconds).
 const ERROR_RETRY_SECONDS = 60;
@@ -145,29 +144,15 @@ export default {
 
     try {
 
-      // Obtain a Google OAuth2 access token for Drive API access.
-      const accessToken = await getAccessToken(
-        env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-        env.GOOGLE_PRIVATE_KEY
+      // Fetch the raw ICS text from Nextcloud via WebDAV.
+      // Credentials are stored as Worker secrets — never in source code.
+      // An app password is used rather than the account password so it can
+      // be revoked independently without affecting the Nextcloud account.
+      const icsText = await fetchIcsFromNextcloud(
+        env.NEXTCLOUD_URL,
+        env.NEXTCLOUD_USERNAME,
+        env.NEXTCLOUD_PASSWORD
       );
-
-      // Locate the ICS file in the configured Drive folder by filename.
-      const fileId = await findIcsFileId(
-        env.GOOGLE_DRIVE_FOLDER_ID,
-        CALENDAR_FILENAME,
-        accessToken
-      );
-
-      if (!fileId) {
-        return renderErrorPage(
-          'Calendar file "' + CALENDAR_FILENAME +
-          '" was not found in the configured Drive folder.',
-          layout
-        );
-      }
-
-      // Fetch the raw ICS text content from Google Drive.
-      const icsText = await fetchIcsContent(fileId, accessToken);
 
       if (!icsText) {
         return renderErrorPage(
@@ -303,6 +288,53 @@ function toLocalDateStr(date) {
     month:    '2-digit',
     day:      '2-digit',
   }).format(date);
+}
+
+
+// =============================================================================
+// NEXTCLOUD WEBDAV — fetch ICS file
+// =============================================================================
+// Fetches the ICS file from Nextcloud using HTTP Basic authentication over
+// the WebDAV interface. No OAuth or token exchange is required — credentials
+// are passed directly in the Authorization header.
+//
+// Required Worker secrets (set in Cloudflare dashboard and deploy.yml):
+//   NEXTCLOUD_URL      — Full WebDAV URL to the ICS file, e.g.:
+//                        https://fileshare.fargond.gov/remote.php/dav/files/
+//                        USERNAME/FFD%20Calendar%20Export/FFD%20Calendar%20Calendar.ics
+//   NEXTCLOUD_USERNAME — Nextcloud username (not display name)
+//   NEXTCLOUD_PASSWORD — Nextcloud app password (not account password).
+//                        Generate at: Nextcloud → Settings → Security →
+//                        Devices & sessions → Create new app password.
+//                        App passwords can be revoked without affecting the
+//                        main Nextcloud account.
+
+async function fetchIcsFromNextcloud(nextcloudUrl, username, password) {
+  // Encode credentials as Base64 for the HTTP Basic Authorization header.
+  // btoa() is available natively in Cloudflare Workers.
+  const credentials = btoa(username + ':' + password);
+
+  const res = await fetch(nextcloudUrl, {
+    method:  'GET',
+    headers: {
+      'Authorization': 'Basic ' + credentials,
+    },
+    // cf.cacheTtl: 0 ensures Cloudflare's edge cache is bypassed so the
+    // Worker always retrieves the current file from Nextcloud rather than
+    // a stale cached copy. The Workers Cache API handles page-level caching.
+    cf: { cacheTtl: 0 },
+  });
+
+  if (!res.ok) {
+    // Log the status server-side without exposing credentials or the URL.
+    console.error(
+      'Nextcloud WebDAV fetch failed (' + res.status + '). ' +
+      'Verify NEXTCLOUD_URL, NEXTCLOUD_USERNAME, and NEXTCLOUD_PASSWORD secrets.'
+    );
+    return null;
+  }
+
+  return await res.text();
 }
 
 
@@ -620,163 +652,6 @@ function getAllDayBannerStyle(summary) {
     ';border-left-color:'  + c.border +
     ';color:'              + c.text + ';"'
   );
-}
-
-
-// =============================================================================
-// GOOGLE SERVICE ACCOUNT AUTHENTICATION
-// =============================================================================
-// Generates a short-lived Google OAuth2 access token from service account
-// credentials stored as Worker secrets. Uses RSA-SHA256 JWT signing via the
-// Web Crypto API built into Cloudflare Workers — no external dependencies.
-//
-// This is the same pattern used by daily-message-display and slide-timing-proxy.
-//
-// Required Worker secrets:
-//   GOOGLE_SERVICE_ACCOUNT_EMAIL — service account email address
-//   GOOGLE_PRIVATE_KEY           — RSA private key from the Google Cloud JSON key file
-
-async function getAccessToken(email, rawPrivateKey) {
-
-  // Build the JWT header and payload.
-  const now     = Math.floor(Date.now() / 1000);
-  const header  = base64url(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
-  const payload = base64url(JSON.stringify({
-    iss:   email,
-    scope: GOOGLE_AUTH_SCOPE,
-    aud:   'https://oauth2.googleapis.com/token',
-    iat:   now,
-    exp:   now + 3600,
-  }));
-
-  const signingInput = header + '.' + payload;
-
-  // Import the RSA private key. The key arrives with literal \n sequences
-  // from the GitHub secret; convert them to real newlines before stripping
-  // the PEM envelope.
-  const pemString = rawPrivateKey.replace(/\\n/g, '\n');
-  const pemBody   = pemString
-    .replace('-----BEGIN PRIVATE KEY-----',     '')
-    .replace('-----END PRIVATE KEY-----',       '')
-    .replace('-----BEGIN RSA PRIVATE KEY-----', '')
-    .replace('-----END RSA PRIVATE KEY-----',   '')
-    .replace(/\n/g, '')
-    .trim();
-
-  const binaryKey = Uint8Array.from(atob(pemBody), c => c.charCodeAt(0));
-
-  const cryptoKey = await crypto.subtle.importKey(
-    'pkcs8',
-    binaryKey,
-    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
-    false,
-    ['sign']
-  );
-
-  // Sign the JWT. Use arrayBufferToBase64url rather than spread to avoid
-  // call-stack overflow on large RSA signature buffers.
-  const signatureBuf = await crypto.subtle.sign(
-    'RSASSA-PKCS1-v1_5',
-    cryptoKey,
-    new TextEncoder().encode(signingInput)
-  );
-
-  const jwt = signingInput + '.' + arrayBufferToBase64url(signatureBuf);
-
-  // Exchange the signed JWT for a short-lived access token.
-  const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body:    'grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=' + jwt,
-  });
-
-  if (!tokenRes.ok) {
-    const errText = await tokenRes.text();
-    throw new Error('Token exchange failed (' + tokenRes.status + '): ' + errText);
-  }
-
-  const tokenData = await tokenRes.json();
-  return tokenData.access_token;
-}
-
-// Encodes a string to base64url format (used in JWT construction).
-function base64url(str) {
-  return btoa(str)
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=/g, '');
-}
-
-// Converts an ArrayBuffer to base64url using a byte-by-byte loop.
-// The spread operator can throw RangeError on large buffers — this is safe.
-function arrayBufferToBase64url(buffer) {
-  const bytes = new Uint8Array(buffer);
-  let binary  = '';
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary)
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=/g, '');
-}
-
-
-// =============================================================================
-// GOOGLE DRIVE — locate ICS file and fetch content
-// =============================================================================
-
-// Searches the given Drive folder for a file with the exact CALENDAR_FILENAME.
-// Returns the file ID string, or null if not found.
-async function findIcsFileId(folderId, filename, accessToken) {
-  // Escape any single quotes in the filename to prevent Drive query injection.
-  const safeFilename = filename.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-
-  const query =
-    "'" + folderId + "' in parents" +
-    " and name = '" + safeFilename + "'" +
-    " and trashed = false";
-
-  const url =
-    'https://www.googleapis.com/drive/v3/files' +
-    '?q='      + encodeURIComponent(query) +
-    '&fields=files(id,name)' +
-    '&pageSize=1';
-
-  const res = await fetch(url, {
-    headers: { 'Authorization': 'Bearer ' + accessToken },
-    cf: { cacheTtl: 0 }, // always fetch fresh file listing
-  });
-
-  if (!res.ok) {
-    console.error('Drive API search error (' + res.status + '): ' + await res.text());
-    return null;
-  }
-
-  const data = await res.json();
-  return (data.files && data.files.length > 0) ? data.files[0].id : null;
-}
-
-// Fetches the text content of a Drive file by ID.
-// Returns the raw text string, or null on failure.
-async function fetchIcsContent(fileId, accessToken) {
-  const res = await fetch(
-    'https://www.googleapis.com/drive/v3/files/' +
-      encodeURIComponent(fileId) + '?alt=media',
-    {
-      headers: { 'Authorization': 'Bearer ' + accessToken },
-      cf: { cacheTtl: 0 },
-    }
-  );
-
-  if (!res.ok) {
-    console.error(
-      'Drive file fetch error (' + res.status + ') for file ID: ' + fileId
-    );
-    return null;
-  }
-
-  return await res.text();
 }
 
 
