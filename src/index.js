@@ -278,13 +278,17 @@ function parseIcs(icsText) {
 
     // Property name may include parameters: DTSTART;TZID=America/Chicago
     // Split on first colon for the name+params portion and the value.
-    const namePart = line.substring(0, colonIdx).trim().toUpperCase();
-    const value    = line.substring(colonIdx + 1).trim();
+   // Preserve original case for the params portion — TZID values like
+    // "Central Standard Time" must not be uppercased before windowsToIana()
+    // looks them up. Only the property name itself is uppercased.
+    const rawNamePart = line.substring(0, colonIdx).trim();
+    const value       = line.substring(colonIdx + 1).trim();
 
-    // Separate base property name from any parameters (split on first ;).
-    const semiIdx  = namePart.indexOf(';');
-    const propName = semiIdx === -1 ? namePart : namePart.substring(0, semiIdx);
-    const propParams = semiIdx === -1 ? '' : namePart.substring(semiIdx + 1);
+    const semiIdx    = rawNamePart.indexOf(';');
+    const propName   = semiIdx === -1
+      ? rawNamePart.toUpperCase()
+      : rawNamePart.substring(0, semiIdx).toUpperCase();
+    const propParams = semiIdx === -1 ? '' : rawNamePart.substring(semiIdx + 1);
 
     if (propName === 'BEGIN' && value === 'VEVENT') {
       current = {};
