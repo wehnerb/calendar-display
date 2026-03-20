@@ -67,7 +67,7 @@ const DEFAULT_LAYOUT = 'wide';
 
 // Layout pixel dimensions — must match all other station Workers exactly.
 const LAYOUTS = {
-  full:  { width: 1920, height: 1080 },
+  full:  { width: 1920, height: 1075 },
   wide:  { width: 1735, height: 720  },
   split: { width: 852,  height: 720  },
   tri:   { width: 558,  height: 720  },
