@@ -999,7 +999,7 @@ function buildStripLayout(events, displayDates, layout, layoutKey) {
     '  width: '   + width  + 'px; height: ' + height + 'px;' +
     '  padding: ' + pad    + 'px; overflow: hidden;' +
     '  display: flex; flex-direction: column;' +
-    '  gap: '     + Math.floor(pad * 0.55) + 'px;' +
+    '  gap: ' + Math.floor(pad * (displayDates.length <= 5 ? 0.55 : 0.35)) + 'px;' +
     '}' +
     '.day-section { display: flex; flex-direction: column; flex-shrink: 0; }' +
     '.day-heading {' +
