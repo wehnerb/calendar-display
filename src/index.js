@@ -728,8 +728,6 @@ function buildSplitLayout(events, displayDates, layout, layoutKey) {
   const leftWidth      = Math.floor(width * leftRatio);
 
   const rightWidth    = width - leftWidth - (pad * 3);
-  const rightDayCount = displayDates.length - 1;
-
   const todayHeaderFont = Math.floor(height * 0.046);
   const todayDateFont   = Math.floor(height * 0.030);
   const todayTimeFont   = Math.floor(height * 0.040);
