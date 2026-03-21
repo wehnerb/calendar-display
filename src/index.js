@@ -50,7 +50,7 @@
 // Number of days to display, starting from today.
 // wide/full: today panel + (DAYS_TO_SHOW - 1) day columns in right panel.
 // split/tri: total days listed in the upcoming strip.
-const DAYS_TO_SHOW = 5;
+const DAYS_TO_SHOW = 6;
 
 // Page auto-refresh interval in seconds. 900 = 15 minutes.
 // Also controls how long rendered HTML is cached in the Workers Cache API.
