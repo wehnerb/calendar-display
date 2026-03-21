@@ -827,7 +827,7 @@ function buildSplitLayout(events, displayDates, layout, layoutKey) {
     '}' +
     '.today-loc {' +
     '  font-size: '      + todayLocFont + 'px; color: #7ab3d9; margin-top: 2px;' +
-    '  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;' +
+    '  overflow: hidden;' +
     '}' +
 
     // Right panel (day columns)
