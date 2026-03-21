@@ -976,33 +976,17 @@ function buildSplitLayout(events, displayDates, layout, layoutKey) {
 // =============================================================================
 // Compact list of upcoming days grouped by date, with all-day banners above
 // timed events for each day. Designed for narrower display columns.
-//
-// Each day section is given an equal share of the available height so that
-// all days are always visible. Content that exceeds a section's share is
-// clipped within that section rather than pushing later sections off screen.
 
 function buildStripLayout(events, displayDates, layout, layoutKey) {
   const { width, height } = layout;
 
-  // Scale spacing down proportionally when more days are shown.
-  // Font sizes are kept constant for readability; only gaps and margins scale.
-  const spacingScale = Math.min(1, 5 / displayDates.length);
-
-  const pad          = Math.floor(height * 0.030);
-  const stripPad     = Math.floor(pad * spacingScale);
-  const sectionGap   = Math.floor(pad * 0.55 * spacingScale);
-  const dayHeadFont  = Math.floor(height * 0.030);
-  const timeFont     = Math.floor(height * 0.025);
-  const titleFont    = Math.floor(height * 0.026);
-  const bannerFont   = Math.floor(height * 0.023);
-  const noEventsFont = Math.floor(height * 0.022);
-  const timeColWidth = Math.floor(width  * 0.30);
-
-  // Calculate an equal max-height per day section so all days are always
-  // visible. Content beyond a section's share clips within that section.
-  const availableHeight  = height - (stripPad * 2);
-  const totalGapHeight   = sectionGap * (displayDates.length - 1);
-  const maxSectionHeight = Math.floor((availableHeight - totalGapHeight) / displayDates.length);
+  const pad           = Math.floor(height * 0.030);
+  const dayHeadFont   = Math.floor(height * 0.030);
+  const timeFont      = Math.floor(height * 0.025);
+  const titleFont     = Math.floor(height * 0.026);
+  const bannerFont    = Math.floor(height * 0.023);
+  const noEventsFont  = Math.floor(height * 0.022);
+  const timeColWidth  = Math.floor(width  * 0.30);
 
   const styles = (
     '*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }' +
@@ -1013,34 +997,27 @@ function buildStripLayout(events, displayDates, layout, layoutKey) {
     '}' +
     '.strip {' +
     '  width: '   + width  + 'px; height: ' + height + 'px;' +
-    '  padding: ' + stripPad + 'px; overflow: hidden;' +
+    '  padding: ' + pad    + 'px; overflow: hidden;' +
     '  display: flex; flex-direction: column;' +
-    '  gap: '     + sectionGap + 'px;' +
+    '  gap: '     + Math.floor(pad * 0.55) + 'px;' +
     '}' +
-    '.day-section {' +
-    '  display: flex; flex-direction: column; flex-shrink: 0;' +
-    // Max-height ensures each day gets an equal share and all are visible.
-    // overflow: hidden clips any events that exceed the section's share.
-    '  max-height: ' + maxSectionHeight + 'px; overflow: hidden;' +
-    '}' +
+    '.day-section { display: flex; flex-direction: column; flex-shrink: 0; }' +
     '.day-heading {' +
     '  font-size: '      + dayHeadFont + 'px; font-weight: 700; color: #5b9ecf;' +
-    '  padding-bottom: ' + Math.floor(pad * 0.22 * spacingScale) + 'px;' +
+    '  padding-bottom: ' + Math.floor(pad * 0.22) + 'px;' +
     '  border-bottom: 1px solid #1e3a5a;' +
-    '  margin-bottom: '  + Math.floor(pad * 0.22 * spacingScale) + 'px;' +
-    '  flex-shrink: 0;' +
+    '  margin-bottom: '  + Math.floor(pad * 0.22) + 'px;' +
     '}' +
     '.allday-banner {' +
     '  background: #1e4d7a; border-left: 3px solid #4a9eda; border-radius: 3px;' +
     '  padding: '        + Math.floor(pad * 0.2) + 'px ' + Math.floor(pad * 0.4) + 'px;' +
-    '  margin-bottom: '  + Math.floor(pad * 0.18 * spacingScale) + 'px;' +
+    '  margin-bottom: '  + Math.floor(pad * 0.18) + 'px;' +
     '  font-size: '      + bannerFont + 'px; color: #a8d1f0;' +
     '  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;' +
-    '  flex-shrink: 0;' +
     '}' +
     '.event-row {' +
     '  display: flex; gap: ' + Math.floor(pad * 0.4) + 'px;' +
-    '  margin-bottom: '  + Math.floor(pad * 0.18 * spacingScale) + 'px;' +
+    '  margin-bottom: '  + Math.floor(pad * 0.18) + 'px;' +
     '}' +
     '.event-time {' +
     '  width: '          + timeColWidth + 'px; flex-shrink: 0;' +
