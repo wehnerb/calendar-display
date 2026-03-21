@@ -974,19 +974,24 @@ function buildSplitLayout(events, displayDates, layout, layoutKey) {
 // =============================================================================
 // STRIP LAYOUT — split / tri
 // =============================================================================
-// Compact list of upcoming days grouped by date, with all-day banners above
-// timed events for each day. Designed for narrower display columns.
+// Compact list of upcoming days displayed as rows. The date label sits in a
+// fixed-width left column, top-aligned, acting as a visual divider between
+// days. Events (all-day banners and timed entries) fill the right column.
+// This layout uses horizontal space for dates rather than vertical space,
+// allowing more days to fit without clipping.
 
 function buildStripLayout(events, displayDates, layout, layoutKey) {
   const { width, height } = layout;
 
-  const pad           = Math.floor(height * 0.030);
-  const dayHeadFont   = Math.floor(height * 0.030);
-  const timeFont      = Math.floor(height * 0.025);
-  const titleFont     = Math.floor(height * 0.026);
-  const bannerFont    = Math.floor(height * 0.023);
-  const noEventsFont  = Math.floor(height * 0.022);
-  const timeColWidth  = Math.floor(width  * 0.30);
+  const pad          = Math.floor(height * 0.030);
+  const dateColWidth = Math.floor(width * 0.22);
+  const dayHeadFont  = Math.floor(height * 0.026);
+  const timeFont     = Math.floor(height * 0.025);
+  const titleFont    = Math.floor(height * 0.026);
+  const bannerFont   = Math.floor(height * 0.023);
+  const noEventsFont = Math.floor(height * 0.022);
+  const timeColWidth = Math.floor((width - dateColWidth) * 0.36);
+  const rowGap       = Math.floor(pad * 0.45);
 
   const styles = (
     '*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }' +
@@ -999,59 +1004,84 @@ function buildStripLayout(events, displayDates, layout, layoutKey) {
     '  width: '   + width  + 'px; height: ' + height + 'px;' +
     '  padding: ' + pad    + 'px; overflow: hidden;' +
     '  display: flex; flex-direction: column;' +
-    '  gap: '     + Math.floor(pad * 0.55) + 'px;' +
+    '  gap: '     + rowGap + 'px;' +
     '}' +
-    '.day-section { display: flex; flex-direction: column; flex-shrink: 0; }' +
-    '.day-heading {' +
-    '  font-size: '      + dayHeadFont + 'px; font-weight: 700; color: #5b9ecf;' +
-    '  padding-bottom: ' + Math.floor(pad * 0.22) + 'px;' +
-    '  border-bottom: 1px solid #1e3a5a;' +
-    '  margin-bottom: '  + Math.floor(pad * 0.22) + 'px;' +
+
+    // Each day is a horizontal row: date column left, events column right.
+    '.day-row {' +
+    '  display: flex; flex-direction: row; flex-shrink: 0;' +
+    '  min-height: 0;' +
     '}' +
+
+    // Date column — fixed width, top-aligned, right border acts as divider.
+    '.day-date {' +
+    '  width: '        + dateColWidth + 'px; flex-shrink: 0;' +
+    '  padding-right: ' + Math.floor(pad * 0.5) + 'px;' +
+    '  padding-top: '   + Math.floor(pad * 0.05) + 'px;' +
+    '  border-right: 2px solid #1e3a5a;' +
+    '  font-size: '    + dayHeadFont + 'px; font-weight: 700; color: #5b9ecf;' +
+    '  line-height: 1.3;' +
+    '}' +
+
+    // Events column — fills remaining width, left padding creates separation.
+    '.day-events {' +
+    '  flex: 1; min-width: 0;' +
+    '  padding-left: ' + Math.floor(pad * 0.5) + 'px;' +
+    '  display: flex; flex-direction: column;' +
+    '}' +
+
     '.allday-banner {' +
     '  background: #1e4d7a; border-left: 3px solid #4a9eda; border-radius: 3px;' +
-    '  padding: '        + Math.floor(pad * 0.2) + 'px ' + Math.floor(pad * 0.4) + 'px;' +
-    '  margin-bottom: '  + Math.floor(pad * 0.18) + 'px;' +
-    '  font-size: '      + bannerFont + 'px; color: #a8d1f0;' +
+    '  padding: '       + Math.floor(pad * 0.18) + 'px ' + Math.floor(pad * 0.4) + 'px;' +
+    '  margin-bottom: ' + Math.floor(pad * 0.14) + 'px;' +
+    '  font-size: '     + bannerFont + 'px; color: #a8d1f0;' +
     '  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;' +
+    '  flex-shrink: 0;' +
     '}' +
+
     '.event-row {' +
     '  display: flex; gap: ' + Math.floor(pad * 0.4) + 'px;' +
-    '  margin-bottom: '  + Math.floor(pad * 0.18) + 'px;' +
+    '  margin-bottom: ' + Math.floor(pad * 0.14) + 'px;' +
     '}' +
     '.event-time {' +
-    '  width: '          + timeColWidth + 'px; flex-shrink: 0;' +
-    '  font-size: '      + timeFont + 'px; color: #4a9eda; font-weight: 600;' +
+    '  width: '         + timeColWidth + 'px; flex-shrink: 0;' +
+    '  font-size: '     + timeFont + 'px; color: #4a9eda; font-weight: 600;' +
     '}' +
     '.event-title {' +
     '  flex: 1; min-width: 0;' +
-    '  font-size: '      + titleFont + 'px; color: #c8dae8;' +
+    '  font-size: '     + titleFont + 'px; color: #c8dae8;' +
     '  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;' +
     '}' +
     '.no-events {' +
-    '  font-size: '      + noEventsFont + 'px; color: #3d5a73; font-style: italic;' +
+    '  font-size: '     + noEventsFont + 'px; color: #3d5a73; font-style: italic;' +
     '}'
   );
 
-  let sectionsHtml = '';
+  let rowsHtml = '';
 
   for (const dateStr of displayDates) {
     const dayEvts = getEventsForDate(events, dateStr);
     const dayAD   = dayEvts.filter(e =>  e.allDay);
     const dayTmd  = dayEvts.filter(e => !e.allDay).sort(sortByStart);
 
-    let sectionBody = '';
+    // Format date as two lines: "Mon" on top, "3/18" below, for compact display.
+    const shortLabel = formatDateShort(dateStr); // e.g. "Mon 3/18"
+    const spaceIdx   = shortLabel.indexOf(' ');
+    const dateLine1  = spaceIdx !== -1 ? shortLabel.substring(0, spaceIdx) : shortLabel;
+    const dateLine2  = spaceIdx !== -1 ? shortLabel.substring(spaceIdx + 1) : '';
+
+    let eventsHtml = '';
     for (const e of dayAD) {
-      sectionBody +=
+      eventsHtml +=
         '<div class="allday-banner"' + getAllDayBannerStyle(e.summary) + '>' +
           escapeHtml(e.summary || 'All Day') +
         '</div>';
     }
     if (dayTmd.length === 0 && dayAD.length === 0) {
-      sectionBody += '<div class="no-events">No events</div>';
+      eventsHtml += '<div class="no-events">No events</div>';
     } else {
       for (const e of dayTmd) {
-        sectionBody +=
+        eventsHtml +=
           '<div class="event-row">' +
             '<div class="event-time">' + escapeHtml(formatTime(e.start)) + '</div>' +
             '<div class="event-title">' + escapeHtml(e.summary || '(No title)') + '</div>' +
@@ -1059,14 +1089,17 @@ function buildStripLayout(events, displayDates, layout, layoutKey) {
       }
     }
 
-    sectionsHtml +=
-      '<div class="day-section">' +
-        '<div class="day-heading">' + escapeHtml(formatDateShort(dateStr)) + '</div>' +
-        sectionBody +
+    rowsHtml +=
+      '<div class="day-row">' +
+        '<div class="day-date">' +
+          escapeHtml(dateLine1) +
+          (dateLine2 ? '<br>' + escapeHtml(dateLine2) : '') +
+        '</div>' +
+        '<div class="day-events">' + eventsHtml + '</div>' +
       '</div>';
   }
 
-  return buildHtmlDoc(width, height, styles, '<div class="strip">' + sectionsHtml + '</div>');
+  return buildHtmlDoc(width, height, styles, '<div class="strip">' + rowsHtml + '</div>');
 }
 
 // =============================================================================
