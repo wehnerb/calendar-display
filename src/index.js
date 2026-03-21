@@ -720,7 +720,13 @@ function buildSplitLayout(events, displayDates, layout, layoutKey) {
   const pad           = Math.floor(height * 0.030);
   const labelHeight   = showLabel ? Math.floor(height * 0.065) : 0;
   const panelHeight   = height - (pad * 2) - labelHeight;
-  const leftWidth     = Math.floor(width * 0.36);
+  
+  // Shrink the today panel proportionally when more day columns are shown
+  // so the right panel columns don't get clipped on narrower layouts.
+  const rightDayCount  = displayDates.length - 1;
+  const leftRatio      = rightDayCount <= 4 ? 0.36 : 0.30;
+  const leftWidth      = Math.floor(width * leftRatio);
+
   const rightWidth    = width - leftWidth - (pad * 3);
   const rightDayCount = displayDates.length - 1;
 
