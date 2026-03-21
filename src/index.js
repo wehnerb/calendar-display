@@ -823,7 +823,7 @@ function buildSplitLayout(events, displayDates, layout, layoutKey) {
     '.today-title {' +
     '  font-size: '      + todayTitleFont + 'px; font-weight: 600; color: #dde6f0;' +
     '  line-height: 1.3;' +
-    '  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;' +
+    '  overflow: hidden;' +
     '}' +
     '.today-loc {' +
     '  font-size: '      + todayLocFont + 'px; color: #7ab3d9; margin-top: 2px;' +
@@ -855,7 +855,7 @@ function buildSplitLayout(events, displayDates, layout, layoutKey) {
     '}' +
     '.day-title {' +
     '  font-size: '      + dayTitleFont + 'px; color: #c8dae8;' +
-    '  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;' +
+    '  overflow: hidden;' +
     '}' +
     '.no-events {' +
     '  font-size: '      + noEventsFont + 'px; color: #3d5a73; font-style: italic;' +
