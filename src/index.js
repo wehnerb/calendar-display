@@ -800,7 +800,7 @@ function buildSplitLayout(events, displayDates, layout, layoutKey) {
     '  padding: '        + Math.floor(pad * 0.28) + 'px ' + Math.floor(pad * 0.5) + 'px;' +
     '  margin-bottom: '  + Math.floor(pad * 0.3)  + 'px;' +
     '  font-size: '      + bannerFont + 'px; color: #a8d1f0;' +
-    '  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;' +
+    '  overflow: hidden;' + // Change to '  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;' if you don't want all day events text to wrap
     '}' +
 
     // Timed events in today panel
@@ -827,7 +827,7 @@ function buildSplitLayout(events, displayDates, layout, layoutKey) {
     '}' +
     '.today-loc {' +
     '  font-size: '      + todayLocFont + 'px; color: #7ab3d9; margin-top: 2px;' +
-    '  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;' +
+    '  overflow: hidden;' + // Change to '  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;' if you don't want today timed events text to wrap
     '}' +
 
     // Right panel (day columns)
@@ -855,7 +855,7 @@ function buildSplitLayout(events, displayDates, layout, layoutKey) {
     '}' +
     '.day-title {' +
     '  font-size: '      + dayTitleFont + 'px; color: #c8dae8;' +
-    '  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;' +
+    '  overflow: hidden;' + // Change to '  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;' if you don't want upcoming timed events text to wrap
     '}' +
     '.no-events {' +
     '  font-size: '      + noEventsFont + 'px; color: #3d5a73; font-style: italic;' +
