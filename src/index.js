@@ -855,7 +855,7 @@ function buildSplitLayout(events, displayDates, layout, layoutKey) {
     '}' +
     '.day-title {' +
     '  font-size: '      + dayTitleFont + 'px; color: #c8dae8;' +
-    '  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;' +
+    '  overflow: hidden;' +
     '}' +
     '.no-events {' +
     '  font-size: '      + noEventsFont + 'px; color: #3d5a73; font-style: italic;' +
