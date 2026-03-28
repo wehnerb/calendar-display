@@ -116,7 +116,7 @@ The top of `src/index.js` contains all values that may need to be changed. No ot
 
 | Constant | Default | Description |
 |----------|---------|-------------|
-| `DAYS_TO_SHOW` | `5` | Number of days to display starting from today. `wide`/`full`: today panel + next N-1 columns. `split`/`tri`: total days in the strip. |
+| `DAYS_TO_SHOW` | `6` | Number of days to display starting from today. `wide`/`full`: today panel + next N-1 columns. `split`/`tri`: total days in the strip. |
 | `CACHE_SECONDS` | `900` | Page auto-refresh interval in seconds. 900 = 15 minutes. Also controls the Workers Cache API TTL. |
 | `CACHE_VERSION` | `1` | Increment this integer to immediately invalidate all cached pages. Use after any configuration change that affects the rendered output. |
 | `DEFAULT_LAYOUT` | `'wide'` | Layout used when no `?layout=` parameter is provided. |
