@@ -1211,10 +1211,13 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
   // matching both the today header and day column header (identical structure).
   const hdrPad      = Math.floor(pad * 0.38) * 2;          // top + bottom padding
   const hdrGap      = Math.floor(pad * 0.15);               // gap between flex rows
-  // 4 content rows: date, H/L, condition, wind — 3 gaps between them.
-  const hdrContent  = colDateFont + colWxFont + colWxFont + colWindFont + (hdrGap * 3);
+  // 4 content rows: date, H/L, condition, wind.
+  // Condition can wrap to 2 lines (e.g. "Heavy Snow And Areas Of Blowing Snow"),
+  // so estimate 2 lines for that row to keep maxSlots accurate. 3 gaps between rows.
+  const hdrContent  = colDateFont + colWxFont + (colWxFont * 2) + colWindFont + (hdrGap * 3);
   // Badge rows (if any): one gap before the block, then N badges with gaps between.
-  const badgeRowH   = badgeFont + Math.floor(pad * 0.12) * 2;
+  // Badges can wrap to 2 lines, so estimate 2 * line-height per badge row.
+  const badgeRowH   = Math.ceil(badgeFont * 1.4 * 2) + Math.floor(pad * 0.12) * 2;
   const badgesBlock = maxBadgeCount > 0
     ? hdrGap + (maxBadgeCount * badgeRowH) + ((maxBadgeCount - 1) * hdrGap)
     : 0;
@@ -1343,7 +1346,7 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     '.hdr-hl .lo { color: #80c8f0; }' +
     '.hdr-cond {' +
     '  font-size: '     + colWxFont + 'px; color: #a8d1f0;' +
-    '  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;' +
+    '  overflow-wrap: break-word;' + // wrap long condition text instead of truncating
     '}' +
     '.hdr-wind {' +
     '  font-size: '     + colWindFont + 'px; color: #7ab3d9;' +
@@ -1357,7 +1360,7 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     '  border-radius: 3px;' +
     '  padding: '       + Math.floor(pad * 0.12) + 'px ' + Math.floor(pad * 0.35) + 'px;' +
     '  font-size: '     + badgeFont + 'px; font-weight: 600;' +
-    '  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;' +
+    '  overflow-wrap: break-word;' + // wrap long alert names instead of truncating
     '  border: 1px solid transparent; line-height: 1.4;' +
     '}' +
     '.badge-warning   { background:#3a1a1a; border-color:#c0392b; color:#f0a8a8; }' +
