@@ -82,7 +82,7 @@ const CACHE_SECONDS = 900;
 // Increment this integer to immediately invalidate all cached pages.
 // Useful after configuration changes that affect the rendered output,
 // such as updating ALLDAY_COLORS, FILTER_EXACT, or DAYS_TO_SHOW.
-const CACHE_VERSION = 2;
+const CACHE_VERSION = 3;
 
 // Default layout when no ?layout= parameter is provided.
 // Options: 'full', 'wide', 'split', 'tri'
@@ -1211,13 +1211,22 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
   // matching both the today header and day column header (identical structure).
   const hdrPad      = Math.floor(pad * 0.38) * 2;          // top + bottom padding
   const hdrGap      = Math.floor(pad * 0.15);               // gap between flex rows
-  // 4 content rows: date, H/L, condition, wind.
-  // Condition can wrap to 2 lines (e.g. "Heavy Snow And Areas Of Blowing Snow"),
-  // so estimate 2 lines for that row to keep maxSlots accurate. 3 gaps between rows.
-  const hdrContent  = colDateFont + colWxFont + (colWxFont * 2) + colWindFont + (hdrGap * 3);
-  // Badge rows (if any): one gap before the block, then N badges with gaps between.
-  // Badges can wrap to 2 lines, so estimate 2 * line-height per badge row.
-  const badgeRowH   = Math.ceil(badgeFont * 1.4 * 2) + Math.floor(pad * 0.12) * 2;
+  // All header content rows use an explicit line-height of 1.4 (set in CSS below).
+  // JS height estimates use ceil(fontSize * 1.4) per line so they exactly match
+  // the browser's rendered line heights and the fixed CSS height values.
+  const lh = 1.4;
+  // 4 rows: date (1 line), H/L (1 line), condition (2 lines), wind (1 line).
+  // 3 gaps between the 4 rows.
+  const hdrContent = Math.ceil(colDateFont * lh)
+                   + Math.ceil(colWxFont   * lh)
+                   + Math.ceil(colWxFont   * lh) * 2  // condition capped at 2 lines
+                   + Math.ceil(colWindFont * lh)
+                   + (hdrGap * 3);
+  // Each badge slot is a fixed 2-text-line height + top/bottom padding.
+  // This value is used both in the JS height estimate and as the CSS height
+  // on .future-alert-badge so placeholders are always the same height as
+  // real badges regardless of how much text they contain.
+  const badgeRowH  = Math.ceil(badgeFont * lh) * 2 + Math.floor(pad * 0.12) * 2;
   const badgesBlock = maxBadgeCount > 0
     ? hdrGap + (maxBadgeCount * badgeRowH) + ((maxBadgeCount - 1) * hdrGap)
     : 0;
@@ -1317,12 +1326,14 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     '  display: flex; flex-direction: column; overflow: hidden;' +
     '}' +
 
-    // Today header — identical padding, gap, and font sizes as day column headers
-    // so both panels always render at the same total header height.
+    // Today header — fixed height forces it to match day column headers exactly.
+    // The same hdrHeight value is applied to .day-col-header below.
+    // overflow:hidden clips any content that would exceed the allocated space.
     '.left-header {' +
     '  background: #1a3a5c;' +
     '  padding: '       + Math.floor(pad * 0.38) + 'px ' + Math.floor(pad * 0.45) + 'px;' +
     '  border-bottom: 2px solid #2d5a8e; flex-shrink: 0;' +
+    '  height: '        + hdrHeight + 'px; overflow: hidden;' +
     '  display: flex; flex-direction: column;' +
     '  gap: '           + hdrGap + 'px;' +
     '}' +
@@ -1346,7 +1357,9 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     '.hdr-hl .lo { color: #80c8f0; }' +
     '.hdr-cond {' +
     '  font-size: '     + colWxFont + 'px; color: #a8d1f0;' +
-    '  overflow-wrap: break-word;' + // wrap long condition text instead of truncating
+    // line-height:1.4 matches the JS hdrContent estimate (Math.ceil(colWxFont * 1.4)).
+    // overflow-wrap allows the condition to wrap to 2 lines in the fixed-height header.
+    '  line-height: 1.4; overflow-wrap: break-word;' +
     '}' +
     '.hdr-wind {' +
     '  font-size: '     + colWindFont + 'px; color: #7ab3d9;' +
@@ -1360,7 +1373,11 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     '  border-radius: 3px;' +
     '  padding: '       + Math.floor(pad * 0.12) + 'px ' + Math.floor(pad * 0.35) + 'px;' +
     '  font-size: '     + badgeFont + 'px; font-weight: 600;' +
-    '  overflow-wrap: break-word;' + // wrap long alert names instead of truncating
+    // Fixed height = 2 text lines + vertical padding, matching the JS badgeRowH value.
+    // Using a fixed height (rather than line-clamp) ensures .badge-placeholder
+    // elements are always the same height as real badges since they inherit this rule.
+    // overflow:hidden clips text that exceeds 2 lines without breaking the layout.
+    '  height: '        + badgeRowH + 'px; overflow: hidden;' +
     '  border: 1px solid transparent; line-height: 1.4;' +
     '}' +
     '.badge-warning   { background:#3a1a1a; border-color:#c0392b; color:#f0a8a8; }' +
@@ -1458,11 +1475,13 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     '  display: flex; flex-direction: column; overflow: hidden; min-width: 0;' +
     '}' +
 
-    // Day column header — identical padding, gap, and font sizes as today header.
+    // Day column header — same fixed height as .left-header so all headers are
+    // identical regardless of how much weather text or how many badge rows they contain.
     '.day-col-header {' +
     '  background: #132338; flex-shrink: 0;' +
     '  padding: '         + Math.floor(pad * 0.38) + 'px ' + Math.floor(pad * 0.35) + 'px;' +
     '  border-bottom: 1px solid #1e3a5a;' +
+    '  height: '          + hdrHeight + 'px; overflow: hidden;' +
     '  display: flex; flex-direction: column;' +
     '  gap: '             + hdrGap + 'px;' +
     '}' +
@@ -1709,7 +1728,7 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
   // --- Assemble full page ---
   const body = (
     '<div class="outer">' +
-      (showLabel ? '<div class="cal-label">Station Calendar</div>' : '') +
+      (showLabel ? '<div class="cal-label">FFD Calendar</div>' : '') +
       alertStripHtml +
       '<div class="panels">' +
         todayPanelHtml +
