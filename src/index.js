@@ -82,7 +82,7 @@ const CACHE_SECONDS = 900;
 // Increment this integer to immediately invalidate all cached pages.
 // Useful after configuration changes that affect the rendered output,
 // such as updating ALLDAY_COLORS, FILTER_EXACT, or DAYS_TO_SHOW.
-const CACHE_VERSION = 3;
+const CACHE_VERSION = 4;
 
 // Default layout when no ?layout= parameter is provided.
 // Options: 'full', 'wide', 'split', 'tri'
@@ -1212,21 +1212,25 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
   const hdrPad      = Math.floor(pad * 0.38) * 2;          // top + bottom padding
   const hdrGap      = Math.floor(pad * 0.15);               // gap between flex rows
   // All header content rows use an explicit line-height of 1.4 (set in CSS below).
-  // JS height estimates use ceil(fontSize * 1.4) per line so they exactly match
-  // the browser's rendered line heights and the fixed CSS height values.
+  // JS estimates use Math.ceil(fontSize * 1.4) per line to exactly match the
+  // browser's rendered line heights, making the fixed CSS header height precise.
   const lh = 1.4;
-  // 4 rows: date (1 line), H/L (1 line), condition (2 lines), wind (1 line).
+  // 4 rows: date (1 line), H/L (1 line), condition (2 lines max), wind (1 line).
+  // Condition is capped at exactly 2 lines by -webkit-line-clamp in CSS, so this
+  // estimate is always correct regardless of column width or forecast text length.
   // 3 gaps between the 4 rows.
   const hdrContent = Math.ceil(colDateFont * lh)
                    + Math.ceil(colWxFont   * lh)
-                   + Math.ceil(colWxFont   * lh) * 2  // condition capped at 2 lines
+                   + Math.ceil(colWxFont   * lh) * 2  // condition: clamped to 2 lines
                    + Math.ceil(colWindFont * lh)
                    + (hdrGap * 3);
-  // Each badge slot is a fixed 2-text-line height + top/bottom padding.
-  // This value is used both in the JS height estimate and as the CSS height
-  // on .future-alert-badge so placeholders are always the same height as
-  // real badges regardless of how much text they contain.
-  const badgeRowH  = Math.ceil(badgeFont * lh) * 2 + Math.floor(pad * 0.12) * 2;
+  // Each badge row is a fixed 2-text-line height + vertical padding + 2px for borders.
+  // The +2 accounts for the 1px top + 1px bottom border on .future-alert-badge which are
+  // subtracted from the content area by box-sizing:border-box. Without this the second
+  // text line clips at the bottom edge of the badge box.
+  // This same value is the CSS height on .future-alert-badge so real badges and
+  // placeholders are always identical height regardless of text content.
+  const badgeRowH = Math.ceil(badgeFont * lh) * 2 + Math.floor(pad * 0.12) * 2 + 2;
   const badgesBlock = maxBadgeCount > 0
     ? hdrGap + (maxBadgeCount * badgeRowH) + ((maxBadgeCount - 1) * hdrGap)
     : 0;
@@ -1357,9 +1361,12 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     '.hdr-hl .lo { color: #80c8f0; }' +
     '.hdr-cond {' +
     '  font-size: '     + colWxFont + 'px; color: #a8d1f0;' +
-    // line-height:1.4 matches the JS hdrContent estimate (Math.ceil(colWxFont * 1.4)).
-    // overflow-wrap allows the condition to wrap to 2 lines in the fixed-height header.
-    '  line-height: 1.4; overflow-wrap: break-word;' +
+    // line-height:1.4 matches the JS hdrContent estimate (Math.ceil(colWxFont * 1.4) * 2).
+    // -webkit-line-clamp:2 enforces exactly 2 rendered lines in all cases, showing an
+    // ellipsis for overflow. This makes the condition row height deterministic regardless
+    // of column width or text length, so hdrHeight is always exact.
+    '  line-height: 1.4; display: -webkit-box; -webkit-box-orient: vertical;' +
+    '  -webkit-line-clamp: 2; overflow: hidden;' +
     '}' +
     '.hdr-wind {' +
     '  font-size: '     + colWindFont + 'px; color: #7ab3d9;' +
@@ -1368,16 +1375,17 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     // Future alert badge rows — shared by today header and day column headers.
     // maxBadgeCount badge elements are always rendered in every header:
     // real badges where alerts exist, .badge-placeholder elements elsewhere.
-    // This guarantees identical header height across all columns.
+    // Fixed height = 2 text lines + vertical padding + 2px borders (box-sizing:border-box
+    // subtracts borders from content area). overflow:hidden clips any excess text cleanly.
+    // display:flex + align-items:center vertically centers text within the fixed height:
+    // single-line alerts sit centered in the 2-line box; 2-line alerts fill it naturally.
+    // Placeholders inherit the same height so they are always identical to real badges.
     '.future-alert-badge {' +
     '  border-radius: 3px;' +
     '  padding: '       + Math.floor(pad * 0.12) + 'px ' + Math.floor(pad * 0.35) + 'px;' +
     '  font-size: '     + badgeFont + 'px; font-weight: 600;' +
-    // Fixed height = 2 text lines + vertical padding, matching the JS badgeRowH value.
-    // Using a fixed height (rather than line-clamp) ensures .badge-placeholder
-    // elements are always the same height as real badges since they inherit this rule.
-    // overflow:hidden clips text that exceeds 2 lines without breaking the layout.
     '  height: '        + badgeRowH + 'px; overflow: hidden;' +
+    '  display: flex; align-items: center;' +
     '  border: 1px solid transparent; line-height: 1.4;' +
     '}' +
     '.badge-warning   { background:#3a1a1a; border-color:#c0392b; color:#f0a8a8; }' +
