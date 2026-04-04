@@ -1382,7 +1382,7 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
   const evtLocFont      = Math.floor(height * 0.025); // event location — matches main todayLocFont
 
   // Body fonts — day column events.
-  const dayTimeFont     = Math.floor(height * 0.025); // time label
+  const dayTimeFont     = Math.floor(height * 0.023); // time label
   const dayTitleFont    = Math.floor(height * 0.026); // event title
 
   // Hourly weather strip fonts.
