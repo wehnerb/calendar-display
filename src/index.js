@@ -82,7 +82,7 @@ const CACHE_SECONDS = 900;
 // Increment this integer to immediately invalidate all cached pages.
 // Useful after configuration changes that affect the rendered output,
 // such as updating ALLDAY_COLORS, FILTER_EXACT, or DAYS_TO_SHOW.
-const CACHE_VERSION = 7;
+const CACHE_VERSION = 8;
 
 // Default layout when no ?layout= parameter is provided.
 // Options: 'full', 'wide', 'split', 'tri'
@@ -1189,15 +1189,15 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
   const dayTitleFont    = Math.floor(height * 0.029); // matches main dayTitleFont
 
   // Hourly strip fonts.
-  const wxTimeFont      = Math.floor(height * 0.016); // hour label ("NOW", "2 PM")
-  const wxTempFont      = Math.floor(height * 0.020); // temperature
-  const wxEmojiFont     = Math.floor(height * 0.024); // condition emoji
+  const wxTimeFont      = Math.floor(height * 0.020); // hour label ("NOW", "2 PM")
+  const wxTempFont      = Math.floor(height * 0.024); // temperature
+  const wxEmojiFont     = Math.floor(height * 0.022); // condition emoji
 
   // Shared.
-  const bannerFont      = Math.floor(height * 0.022); // all-day shift banners — matches main
-  const alertBannerFont = Math.floor(height * 0.019); // active NWS alert banner text
-  const noEventsFont    = Math.floor(height * 0.024); // "No events" — matches main
-  const labelFont       = Math.floor(height * 0.030); // "FFD Calendar" title (full only)
+  const bannerFont      = Math.floor(height * 0.030); // all-day shift banners — matches main
+  const alertBannerFont = Math.floor(height * 0.030); // active NWS alert banner text
+  const noEventsFont    = Math.floor(height * 0.028); // "No events" — matches main
+  const labelFont       = Math.floor(height * 0.040); // "FFD Calendar" title (full only)
 
   // hdrGap: gap between flex rows inside each header (date, H/L, condition, wind, badges).
   const hdrGap = Math.floor(pad * 0.15);
