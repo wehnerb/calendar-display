@@ -649,10 +649,15 @@ function getBadgeAlertsForDate(alertFeatures, dateStr, todayStr, now) {
     const onset   = p.onset   ? new Date(p.onset)   : null;
     const expires = p.expires ? new Date(p.expires) : null;
     if (!onset || !expires)           return false;
-    if (expires <= now)               return false; // already expired
+    if (expires <= now)               return false; // product already superseded
 
-    const onsetDateStr  = toLocalDateStr(onset);
-    const expireDateStr = toLocalDateStr(expires);
+    // For date-range overlap and display, prefer p.ends (actual weather event end)
+    // over p.expires (alert product expiry). NWS sets expires to when they will
+    // issue the next update, which can be hours before the hazard actually ends.
+    // p.ends may be null for some alert types, so fall back to expires.
+    const eventEnd       = p.ends ? new Date(p.ends) : expires;
+    const onsetDateStr   = toLocalDateStr(onset);
+    const expireDateStr  = toLocalDateStr(eventEnd);
 
     // Alert must overlap this date.
     if (onsetDateStr > dateStr || expireDateStr < dateStr) return false;
@@ -709,17 +714,22 @@ function getAlertBadgeClass(alertProperties) {
 
 // Returns a short timing qualifier for a future alert badge on a specific date:
 //   "begins 6 PM"  — alert starts on this date
-//   "until noon"   — alert expires on this date (started on a prior date)
+//   "until noon"   — alert ends on this date (started on a prior date)
 //   "all day"      — alert spans the entire date entirely
+// Uses p.ends (actual weather event end) in preference to p.expires (product
+// expiry) so the displayed time matches what other weather services show.
 function formatAlertTiming(alertProperties, dateStr) {
-  const onset   = alertProperties.onset   ? new Date(alertProperties.onset)   : null;
-  const expires = alertProperties.expires ? new Date(alertProperties.expires) : null;
+  const onset    = alertProperties.onset ? new Date(alertProperties.onset) : null;
+  // Prefer ends (actual hazard end time) over expires (product message expiry).
+  const eventEnd = (alertProperties.ends || alertProperties.expires)
+    ? new Date(alertProperties.ends || alertProperties.expires)
+    : null;
 
-  const onsetDateStr  = onset   ? toLocalDateStr(onset)   : null;
-  const expireDateStr = expires ? toLocalDateStr(expires) : null;
+  const onsetDateStr  = onset    ? toLocalDateStr(onset)    : null;
+  const expireDateStr = eventEnd ? toLocalDateStr(eventEnd) : null;
 
-  if (onsetDateStr === dateStr) return 'begins ' + formatHourOnly(onset);
-  if (expireDateStr === dateStr) return 'until ' + formatHourOnly(expires);
+  if (onsetDateStr === dateStr)  return 'begins ' + formatHourOnly(onset);
+  if (expireDateStr === dateStr) return 'until '  + formatHourOnly(eventEnd);
   return 'all day';
 }
 
@@ -1519,7 +1529,10 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
         '\u26A0 ' +
         (p.event || 'Weather Alert') +
         ' \u2014 ' +
-        formatExpiresLabel(p.expires, todayStr)
+        // Use p.ends (actual weather event end) if available, falling back to
+      // p.expires (alert product expiry). NWS often sets expires to when they
+      // plan to issue the next update, which can be hours before the hazard ends.
+      formatExpiresLabel(p.ends || p.expires, todayStr)
       );
       alertStripHtml += (
         '<div class="alert-banner ' + cls + '">' +
