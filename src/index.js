@@ -147,6 +147,10 @@ const WEATHER_HOUR_INTERVAL = 2;
 // Width in pixels of the hourly weather strip inside the today panel body.
 const WEATHER_STRIP_WIDTH = 75;
 
+// Size in pixels of the SVG weather icons in the hourly strip.
+// Should be close to the strip's temperature font size for visual balance.
+const WEATHER_ICON_SIZE = 18;
+
 // Edge cache TTL (seconds) for NWS daily and hourly forecasts.
 // NWS updates daily forecasts ~4 times per day and hourly forecasts ~once per hour.
 // 3600 (1 hour) is appropriate — lower if forecast data appears stale.
@@ -589,7 +593,7 @@ function buildHourlyStripSlots(hourlyPeriods, todayStr, now, maxSlots) {
       isNow: slots.length === 0,
       label: slots.length === 0 ? 'NOW' : formatHourLabel(new Date(p.startTime)),
       temp:  p.temperature,
-      emoji: mapConditionToEmoji(p.shortForecast),
+      svg:   getConditionSvg(p.shortForecast, WEATHER_ICON_SIZE),
     });
     nextIndex += WEATHER_HOUR_INTERVAL;
   }
@@ -601,31 +605,226 @@ function buildHourlyStripSlots(hourlyPeriods, todayStr, now, maxSlots) {
 // Checks are case-insensitive and ordered from most to least specific to
 // prevent broad matches (e.g. "rain") from shadowing specific ones
 // (e.g. "thunderstorm" or "freezing rain").
-function mapConditionToEmoji(shortForecast) {
-  if (!shortForecast) return '\uD83C\uDF21'; // default: 🌡
+// Returns the dot color for a given NWS shortForecast string.
+// Used in column headers as a small colored circle before the condition text,
+// providing a quick visual category cue without requiring an emoji font.
+// Color categories:
+//   Yellow      — sunny / clear
+//   Soft yellow — partly cloudy / partly sunny
+//   Amber       — thunderstorm
+//   Light blue  — snow / blizzard
+//   Blue-purple — wintry mix / sleet / freezing precipitation
+//   Bright blue — rain / showers / drizzle
+//   Gray-blue   — cloudy / fog / wind / overcast / default
+function getConditionColor(shortForecast) {
+  if (!shortForecast) return '#b0c4d4'; // default: gray-blue
   const f = shortForecast.toLowerCase();
 
-  if (f.includes('thunderstorm'))                      return '\u26C8\uFE0F'; // ⛈
-  if (f.includes('blizzard'))                         return '\u2744\uFE0F'; // ❄️
+  if (f.includes('thunderstorm'))                   return '#f0a040'; // amber
+  if (f.includes('blizzard') || f.includes('snow')) return '#a8d8f0'; // light blue
   if (f.includes('freezing rain') ||
       f.includes('freezing drizzle') ||
       f.includes('wintry mix') ||
-      f.includes('sleet'))                            return '\uD83C\uDF28'; // 🌨
-  if (f.includes('snow'))                             return '\u2744\uFE0F'; // ❄️
-  if (f.includes('rain') || f.includes('shower'))    return '\uD83C\uDF27'; // 🌧
-  if (f.includes('drizzle'))                         return '\uD83C\uDF26'; // 🌦
-  if (f.includes('fog') || f.includes('haze') ||
-      f.includes('smoke') || f.includes('mist'))     return '\uD83C\uDF2B'; // 🌫
-  if (f.includes('blustery') || f.includes('windy') ||
-      f.includes('breezy'))                          return '\uD83D\uDCA8'; // 💨
-  if (f.includes('mostly cloudy'))                   return '\uD83C\uDF25'; // 🌥
+      f.includes('sleet'))                          return '#a0b0e0'; // blue-purple
+  if (f.includes('rain')    ||
+      f.includes('shower')  ||
+      f.includes('drizzle'))                        return '#60b0f0'; // bright blue
+  if (f.includes('fog')     || f.includes('haze') ||
+      f.includes('smoke')   || f.includes('mist') ||
+      f.includes('blustery')|| f.includes('windy')||
+      f.includes('breezy')  || f.includes('cloudy')||
+      f.includes('overcast'))                       return '#b0c4d4'; // gray-blue
   if (f.includes('partly cloudy') ||
-      f.includes('partly sunny'))                    return '\u26C5';       // ⛅
+      f.includes('partly sunny'))                   return '#c8a830'; // soft yellow
+  if (f.includes('mostly sunny')  ||
+      f.includes('mostly clear')  ||
+      f.includes('sunny')         ||
+      f.includes('clear'))                          return '#f0c040'; // yellow
+  return '#b0c4d4'; // default: gray-blue
+}
+
+// Returns an inline SVG weather icon string for a given NWS shortForecast.
+// Used in the hourly weather strip where there is no accompanying condition text.
+// sizePx controls the rendered square size of the SVG element.
+// All paths use a viewBox of "0 0 24 24" for consistent coordinate math.
+// Colors are hardcoded (not CSS variables) because this SVG renders inside a
+// known dark background and must not invert in light mode.
+function getConditionSvg(shortForecast, sizePx) {
+  if (!shortForecast) return buildWeatherSvg(sizePx, svgDefault());
+  const f = shortForecast.toLowerCase();
+
+  if (f.includes('thunderstorm'))                   return buildWeatherSvg(sizePx, svgThunderstorm());
+  if (f.includes('blizzard') || f.includes('snow')) return buildWeatherSvg(sizePx, svgSnow());
+  if (f.includes('freezing rain') ||
+      f.includes('freezing drizzle') ||
+      f.includes('wintry mix') ||
+      f.includes('sleet'))                          return buildWeatherSvg(sizePx, svgWintryMix());
+  if (f.includes('rain') || f.includes('shower'))  return buildWeatherSvg(sizePx, svgRain());
+  if (f.includes('drizzle'))                        return buildWeatherSvg(sizePx, svgDrizzle());
+  if (f.includes('fog')   || f.includes('haze') ||
+      f.includes('smoke') || f.includes('mist'))   return buildWeatherSvg(sizePx, svgFog());
+  if (f.includes('blustery') || f.includes('windy') ||
+      f.includes('breezy'))                         return buildWeatherSvg(sizePx, svgWind());
+  if (f.includes('mostly cloudy'))                  return buildWeatherSvg(sizePx, svgMostlyCloudy());
+  if (f.includes('partly cloudy') ||
+      f.includes('partly sunny'))                   return buildWeatherSvg(sizePx, svgPartlyCloudy());
   if (f.includes('mostly sunny') ||
-      f.includes('mostly clear'))                    return '\uD83C\uDF24'; // 🌤
-  if (f.includes('sunny') || f.includes('clear'))   return '\u2600\uFE0F'; // ☀️
-  if (f.includes('cloudy') || f.includes('overcast')) return '\u2601\uFE0F'; // ☁️
-  return '\uD83C\uDF21'; // 🌡 default
+      f.includes('mostly clear'))                   return buildWeatherSvg(sizePx, svgMostlySunny());
+  if (f.includes('sunny') || f.includes('clear'))  return buildWeatherSvg(sizePx, svgSunny());
+  if (f.includes('cloudy') || f.includes('overcast')) return buildWeatherSvg(sizePx, svgCloudy());
+  return buildWeatherSvg(sizePx, svgDefault());
+}
+
+// Wraps SVG path content in a sized SVG element.
+function buildWeatherSvg(sizePx, inner) {
+  return (
+    '<svg xmlns="http://www.w3.org/2000/svg"' +
+    ' width="' + sizePx + '" height="' + sizePx + '"' +
+    ' viewBox="0 0 24 24"' +
+    ' style="display:block;flex-shrink:0;">' +
+    inner +
+    '</svg>'
+  );
+}
+
+// Sun: filled circle + 8 short rays.
+function svgSunny() {
+  return (
+    '<circle cx="12" cy="12" r="4.5" fill="#f0c040"/>' +
+    '<line x1="12" y1="2" x2="12" y2="5" stroke="#f0c040" stroke-width="2" stroke-linecap="round"/>' +
+    '<line x1="12" y1="19" x2="12" y2="22" stroke="#f0c040" stroke-width="2" stroke-linecap="round"/>' +
+    '<line x1="2" y1="12" x2="5" y2="12" stroke="#f0c040" stroke-width="2" stroke-linecap="round"/>' +
+    '<line x1="19" y1="12" x2="22" y2="12" stroke="#f0c040" stroke-width="2" stroke-linecap="round"/>' +
+    '<line x1="4.9" y1="4.9" x2="7.1" y2="7.1" stroke="#f0c040" stroke-width="2" stroke-linecap="round"/>' +
+    '<line x1="16.9" y1="16.9" x2="19.1" y2="19.1" stroke="#f0c040" stroke-width="2" stroke-linecap="round"/>' +
+    '<line x1="16.9" y1="7.1" x2="19.1" y2="4.9" stroke="#f0c040" stroke-width="2" stroke-linecap="round"/>' +
+    '<line x1="4.9" y1="19.1" x2="7.1" y2="16.9" stroke="#f0c040" stroke-width="2" stroke-linecap="round"/>'
+  );
+}
+
+// Mostly sunny: sun (smaller, offset) + small cloud overlapping.
+function svgMostlySunny() {
+  return (
+    '<circle cx="9" cy="9" r="3.5" fill="#f0c040"/>' +
+    '<line x1="9" y1="2" x2="9" y2="4.5" stroke="#f0c040" stroke-width="1.8" stroke-linecap="round"/>' +
+    '<line x1="9" y1="13.5" x2="9" y2="16" stroke="#f0c040" stroke-width="1.8" stroke-linecap="round"/>' +
+    '<line x1="2" y1="9" x2="4.5" y2="9" stroke="#f0c040" stroke-width="1.8" stroke-linecap="round"/>' +
+    '<line x1="13.5" y1="9" x2="16" y2="9" stroke="#f0c040" stroke-width="1.8" stroke-linecap="round"/>' +
+    '<line x1="3.8" y1="3.8" x2="5.5" y2="5.5" stroke="#f0c040" stroke-width="1.8" stroke-linecap="round"/>' +
+    '<line x1="12.5" y1="12.5" x2="14.2" y2="14.2" stroke="#f0c040" stroke-width="1.8" stroke-linecap="round"/>' +
+    '<path d="M10 16 a4 4 0 0 1 8 0 a2.5 2.5 0 0 1 0 5 H10 a3 3 0 0 1 0-5Z" fill="#5b7a94"/>'
+  );
+}
+
+// Partly cloudy: sun peeking behind a larger cloud.
+function svgPartlyCloudy() {
+  return (
+    '<circle cx="8" cy="8" r="3" fill="#c8a830"/>' +
+    '<line x1="8" y1="2" x2="8" y2="4" stroke="#c8a830" stroke-width="1.8" stroke-linecap="round"/>' +
+    '<line x1="8" y1="12" x2="8" y2="14" stroke="#c8a830" stroke-width="1.8" stroke-linecap="round"/>' +
+    '<line x1="2" y1="8" x2="4" y2="8" stroke="#c8a830" stroke-width="1.8" stroke-linecap="round"/>' +
+    '<line x1="12" y1="8" x2="14" y2="8" stroke="#c8a830" stroke-width="1.8" stroke-linecap="round"/>' +
+    '<path d="M8 15 a5 5 0 0 1 10 0 a3 3 0 0 1 0 6 H8 a4 4 0 0 1 0-6Z" fill="#4a6880"/>'
+  );
+}
+
+// Mostly cloudy: tiny sun peek + large cloud dominating.
+function svgMostlyCloudy() {
+  return (
+    '<circle cx="7" cy="7" r="2.5" fill="#c8a830" opacity="0.8"/>' +
+    '<path d="M6 13 a6 6 0 0 1 12 0 a3.5 3.5 0 0 1 0 7 H6 a4.5 4.5 0 0 1 0-7Z" fill="#4a6880"/>' +
+    '<path d="M4 16 a4 4 0 0 1 8 0 a2.5 2.5 0 0 1 0 5 H4 a3 3 0 0 1 0-5Z" fill="#5b7a94"/>'
+  );
+}
+
+// Cloudy: two overlapping cloud shapes, no sun.
+function svgCloudy() {
+  return (
+    '<path d="M5 14 a6 6 0 0 1 12 0 a3.5 3.5 0 0 1 0 7 H5 a4.5 4.5 0 0 1 0-7Z" fill="#4a6880"/>' +
+    '<path d="M3 17 a4 4 0 0 1 8 0 a2.5 2.5 0 0 1 0 5 H3 a3 3 0 0 1 0-5Z" fill="#5b7a94"/>'
+  );
+}
+
+// Rain: cloud + 3 angled rain lines.
+function svgRain() {
+  return (
+    '<path d="M4 10 a6 6 0 0 1 12 0 a3.5 3.5 0 0 1 0 7 H4 a4.5 4.5 0 0 1 0-7Z" fill="#4a6880"/>' +
+    '<line x1="7" y1="19" x2="5" y2="23" stroke="#60b0f0" stroke-width="2" stroke-linecap="round"/>' +
+    '<line x1="12" y1="19" x2="10" y2="23" stroke="#60b0f0" stroke-width="2" stroke-linecap="round"/>' +
+    '<line x1="17" y1="19" x2="15" y2="23" stroke="#60b0f0" stroke-width="2" stroke-linecap="round"/>'
+  );
+}
+
+// Drizzle: cloud + lighter, more numerous short lines.
+function svgDrizzle() {
+  return (
+    '<path d="M4 10 a6 6 0 0 1 12 0 a3.5 3.5 0 0 1 0 7 H4 a4.5 4.5 0 0 1 0-7Z" fill="#4a6880"/>' +
+    '<line x1="7" y1="19" x2="6" y2="22" stroke="#60b0f0" stroke-width="1.5" stroke-linecap="round"/>' +
+    '<line x1="11" y1="19" x2="10" y2="22" stroke="#60b0f0" stroke-width="1.5" stroke-linecap="round"/>' +
+    '<line x1="15" y1="19" x2="14" y2="22" stroke="#60b0f0" stroke-width="1.5" stroke-linecap="round"/>' +
+    '<line x1="9" y1="22" x2="8" y2="24" stroke="#60b0f0" stroke-width="1.5" stroke-linecap="round"/>' +
+    '<line x1="13" y1="22" x2="12" y2="24" stroke="#60b0f0" stroke-width="1.5" stroke-linecap="round"/>'
+  );
+}
+
+// Snow: cloud + 5 small filled dots.
+function svgSnow() {
+  return (
+    '<path d="M4 9 a6 6 0 0 1 12 0 a3.5 3.5 0 0 1 0 7 H4 a4.5 4.5 0 0 1 0-7Z" fill="#4a6880"/>' +
+    '<circle cx="7"  cy="20" r="1.8" fill="#a8d8f0"/>' +
+    '<circle cx="12" cy="18" r="1.8" fill="#a8d8f0"/>' +
+    '<circle cx="17" cy="20" r="1.8" fill="#a8d8f0"/>' +
+    '<circle cx="9"  cy="23" r="1.8" fill="#a8d8f0"/>' +
+    '<circle cx="15" cy="23" r="1.8" fill="#a8d8f0"/>'
+  );
+}
+
+// Wintry mix: cloud + alternating rain line and snow dot.
+function svgWintryMix() {
+  return (
+    '<path d="M4 9 a6 6 0 0 1 12 0 a3.5 3.5 0 0 1 0 7 H4 a4.5 4.5 0 0 1 0-7Z" fill="#4a6880"/>' +
+    '<line x1="7"  y1="18" x2="6"  y2="22" stroke="#60b0f0" stroke-width="2" stroke-linecap="round"/>' +
+    '<circle cx="12" cy="20" r="2" fill="#a0b0e0"/>' +
+    '<line x1="17" y1="18" x2="16" y2="22" stroke="#60b0f0" stroke-width="2" stroke-linecap="round"/>' +
+    '<circle cx="9"  cy="23" r="1.8" fill="#a0b0e0"/>' +
+    '<circle cx="15" cy="23" r="1.8" fill="#a0b0e0"/>'
+  );
+}
+
+// Fog: three horizontal lines of decreasing length.
+function svgFog() {
+  return (
+    '<line x1="2"  y1="8"  x2="22" y2="8"  stroke="#b0c4d4" stroke-width="2.5" stroke-linecap="round"/>' +
+    '<line x1="4"  y1="12" x2="20" y2="12" stroke="#b0c4d4" stroke-width="2.5" stroke-linecap="round"/>' +
+    '<line x1="2"  y1="16" x2="22" y2="16" stroke="#b0c4d4" stroke-width="2.5" stroke-linecap="round"/>' +
+    '<line x1="6"  y1="20" x2="18" y2="20" stroke="#b0c4d4" stroke-width="2"   stroke-linecap="round"/>'
+  );
+}
+
+// Wind: three curved horizontal lines (longer, shorter, shortest).
+function svgWind() {
+  return (
+    '<path d="M2 8 Q10 8 14 4 a4 4 0 0 1 4 4 a4 4 0 0 1-4 4 H2" fill="none" stroke="#b0c4d4" stroke-width="2" stroke-linecap="round"/>' +
+    '<path d="M2 14 Q8 14 11 11 a3 3 0 0 1 3 3 a3 3 0 0 1-3 3 H2" fill="none" stroke="#b0c4d4" stroke-width="2" stroke-linecap="round"/>' +
+    '<line x1="2" y1="19" x2="16" y2="19" stroke="#b0c4d4" stroke-width="2" stroke-linecap="round"/>'
+  );
+}
+
+// Thunderstorm: dark cloud + lightning bolt.
+function svgThunderstorm() {
+  return (
+    '<path d="M3 8 a6 6 0 0 1 12 0 a3.5 3.5 0 0 1 0 7 H3 a4.5 4.5 0 0 1 0-7Z" fill="#3a5068"/>' +
+    '<polyline points="13,15 9,21 13,21 9,27" fill="none" stroke="#f0d040" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>'
+  );
+}
+
+// Default: simple thermometer shape.
+function svgDefault() {
+  return (
+    '<rect x="10" y="3" width="4" height="13" rx="2" fill="#b0c4d4"/>' +
+    '<circle cx="12" cy="18" r="4" fill="#b0c4d4"/>' +
+    '<rect x="11" y="6" width="2" height="9" fill="#0d1b2a"/>'
+  );
 }
 
 // Returns the list of alert features that should appear as a future badge on
@@ -1128,13 +1327,6 @@ function buildHtmlDoc(width, height, styles, body) {
     '<meta http-equiv="refresh" content="' + CACHE_SECONDS + '">' +
     '<meta name="viewport" content="width=' + width + ', height=' + height + '">' +
     '<title>Station Calendar</title>' +
-    // Noto Emoji provides emoji glyphs on display hardware that lacks a system
-    // emoji font. Preconnect hints let the browser start DNS/TLS early.
-    // The font is used as a fallback after Arial in all font-family stacks,
-    // so it only activates for characters Arial cannot render (emoji).
-    '<link rel="preconnect" href="https://fonts.googleapis.com">' +
-    '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>' +
-    '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Emoji&display=swap">' +
     '<style>' + styles + '</style>' +
     '</head>' +
     '<body>' + body + '</body>' +
@@ -1305,7 +1497,7 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     'html, body {' +
     '  width: '  + width  + 'px; height: ' + height + 'px;' +
     '  overflow: hidden; background: #0d1b2a; color: #dde6f0;' +
-    '  font-family: Arial, Helvetica, sans-serif, "Noto Emoji";' +
+    '  font-family: Arial, Helvetica, sans-serif;' +
     '}' +
 
     // Outer flex column — label (optional), alert strip (optional), panels grid.
@@ -1458,7 +1650,9 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     '  font-size: '  + wxTempFont + 'px; font-weight: 700;' +
     '  color: #dde6f0; line-height: 1; margin-bottom: 2px;' +
     '}' +
-    '.wx-emoji { font-size: ' + wxEmojiFont + 'px; line-height: 1; }' +
+    // .wx-emoji is now a container for an inline SVG — no font-size needed.
+    // display:flex + align-items:center keeps the SVG centered in the slot.
+    '.wx-emoji { display:flex; align-items:center; justify-content:center; }' +
     '.wx-divider {' +
     '  width: '      + Math.floor(WEATHER_STRIP_WIDTH * 0.6) + 'px;' +
     '  border-top: 1px solid #1e3a5a;' +
@@ -1599,9 +1793,21 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     if (hlInner) html += '<div class="hdr-hl">' + hlInner + '</div>';
 
     if (wx.shortForecast) {
+      // Inline SVG dot — color-coded by weather category — acts as a quick
+      // visual anchor before the condition text without requiring an emoji font.
+      const dotColor = getConditionColor(wx.shortForecast);
+      const dot = (
+        '<svg xmlns="http://www.w3.org/2000/svg"' +
+        ' width="8" height="8" viewBox="0 0 8 8"' +
+        ' style="display:inline-block;vertical-align:middle;' +
+        'margin-right:4px;flex-shrink:0;">' +
+        '<circle cx="4" cy="4" r="4" fill="' + dotColor + '"/>' +
+        '</svg>'
+      );
       html += (
         '<div class="hdr-cond">' +
-          escapeHtml(mapConditionToEmoji(wx.shortForecast) + ' ' + wx.shortForecast) +
+          dot +
+          escapeHtml(wx.shortForecast) +
         '</div>'
       );
     }
@@ -1662,7 +1868,7 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
         '<div class="wx-slot">' +
           '<span class="' + timeCls + '">' + escapeHtml(slot.label) + '</span>' +
           '<span class="wx-temp">' + escapeHtml(String(slot.temp)) + '\u00B0</span>' +
-          '<span class="wx-emoji">' + slot.emoji + '</span>' +
+          '<span class="wx-emoji">' + slot.svg + '</span>' +
           divider +
         '</div>'
       );
@@ -1772,7 +1978,7 @@ function buildStripLayout(events, displayDates, layout, layoutKey) {
     'html, body {' +
     '  width: '  + width  + 'px; height: ' + height + 'px;' +
     '  overflow: hidden; background: #0d1b2a; color: #dde6f0;' +
-    '  font-family: Arial, Helvetica, sans-serif, "Noto Emoji";' +
+    '  font-family: Arial, Helvetica, sans-serif;' +
     '}' +
     '.strip {' +
     '  width: '   + width  + 'px; height: ' + height + 'px;' +
@@ -1929,7 +2135,7 @@ function renderErrorPage(message, layout) {
     '  width: '    + width  + 'px; height: ' + height + 'px;' +
     '  margin: 0; padding: 0; overflow: hidden;' +
     '  background: #0d1b2a; color: #5b9ecf;' +
-    '  font-family: Arial, Helvetica, sans-serif, "Noto Emoji";' +
+    '  font-family: Arial, Helvetica, sans-serif;' +
     '  font-size: ' + fontSize + 'px;' +
     '  display: flex; align-items: center; justify-content: center;' +
     '  text-align: center;' +
