@@ -6,10 +6,15 @@
 //
 // Two layout designs based on the ?layout= URL parameter:
 //   wide / full  → Split view: today's events in a left panel,
-//                  next N-1 days as columns in a right panel
-//   split / tri  → Strip view: compact chronological list grouped by day
+//                  next N-1 days as columns in a right panel.
+//                  Includes NWS weather: daily forecast in all column headers
+//                  (including today), hourly forecast strip in the today panel,
+//                  and active/future NWS alert banners and per-day badges.
+//   split / tri  → Strip view: compact chronological list grouped by day.
+//                  No weather data (layout too narrow).
 //
 // All-day events are rendered as colored banners at the top of each day.
+// Events defined in ALLDAY_COLORS always sort above other all-day events.
 // Events can be filtered by exact title match or substring match.
 //
 // ICS timestamp handling:
@@ -18,13 +23,30 @@
 //   - Floating timestamps (no Z, no TZID) are treated as Central time
 //   - All-day events (date-only DTSTART) are handled as full-day entries
 //
+// NWS weather data (wide/full layouts only):
+//   - Daily forecast: high/low temp, condition emoji, wind per day column.
+//     Today's panel header matches the day column header structure exactly.
+//   - Hourly forecast: remaining hours of today shown in a narrow left strip
+//     inside the today panel body, every WEATHER_HOUR_INTERVAL hours.
+//     Strip slot count is capped so no slot is clipped by the panel boundary.
+//   - Alerts: active alerts shown as full-width banners above the panel row.
+//     Future alerts shown as small severity-colored badges in each affected
+//     day's column header. Multi-day alerts appear on every overlapping day.
+//     All column headers (including today's) render exactly maxBadgeCount
+//     badge rows so all headers are always the same height. Badge rows are
+//     omitted entirely when no visible day has a future alert.
+//   - Active alert banners expire automatically: the next page cache refresh
+//     (up to CACHE_SECONDS later) will omit any alert whose expires time
+//     has passed. Expiry wording uses "until 6 PM" when the alert expires
+//     today, or "until Thursday 6 PM" when it expires on a future day.
+//   All NWS fetches fail gracefully — weather is omitted if unavailable.
+//
 // Caching strategy:
-//   - Rendered HTML is cached per layout in the Workers Cache API for
-//     CACHE_SECONDS seconds, matching the page meta-refresh interval.
-//   - This prevents redundant Nextcloud fetches and ICS parsing on
-//     every display load. Increment CACHE_VERSION to bust all cached pages.
+//   - Rendered HTML cached per layout in Workers Cache API for CACHE_SECONDS.
+//   - NWS daily/hourly forecasts edge-cached for NWS_FORECAST_CACHE_SECONDS.
+//   - NWS alerts edge-cached for NWS_ALERTS_CACHE_SECONDS.
+//   - Increment CACHE_VERSION to immediately invalidate all cached pages.
 //   - Cache-Control: no-store on HTML responses prevents browser caching.
-//     The Workers Cache API handles server-side caching independently.
 //
 // Calendar update workflow:
 //   - Outlook VBA macro exports FFD Calendar to a local folder on startup.
@@ -35,8 +57,9 @@
 // Security:
 //   - Nextcloud credentials stored as Cloudflare Worker secrets — never in code
 //   - HTTP Basic auth used for WebDAV; app password rather than account password
+//   - NWS_USER_AGENT stored as a plain wrangler.toml [vars] entry (not sensitive)
 //   - URL parameters sanitized before use
-//   - All calendar content HTML-escaped before injection into pages
+//   - All calendar and weather content HTML-escaped before page injection
 //   - No X-Frame-Options header — loaded as full-screen iframe by display system
 //   - ICS file fetched server-side; display browser never contacts Nextcloud
 // =============================================================================
@@ -59,7 +82,7 @@ const CACHE_SECONDS = 900;
 // Increment this integer to immediately invalidate all cached pages.
 // Useful after configuration changes that affect the rendered output,
 // such as updating ALLDAY_COLORS, FILTER_EXACT, or DAYS_TO_SHOW.
-const CACHE_VERSION = 1;
+const CACHE_VERSION = 12;
 
 // Default layout when no ?layout= parameter is provided.
 // Options: 'full', 'wide', 'split', 'tri'
@@ -96,11 +119,46 @@ const FILTER_CONTAINS = [
 // Each entry overrides the default blue banner style.
 // bg = background color, border = left accent bar, text = text color.
 // Use hex values. Remove an entry to revert that event to the default style.
+// Events listed here always sort above other all-day events in each day panel.
 const ALLDAY_COLORS = {
   'A Shift': { bg: '#1a4d2e', border: '#2d8a50', text: '#a8f0be' },
   'B Shift': { bg: '#e8e8e8', border: '#808080', text: '#1a1a1a' },
   'C Shift': { bg: '#4d1a1a', border: '#c0392b', text: '#f0a8a8' },
 };
+
+// --- NWS Weather Configuration ---
+
+// NWS forecast office and grid coordinates for Fargo, ND.
+// Verified via: https://api.weather.gov/points/46.8772,-96.7898
+// These values are static for Fargo and do not need to change between stations —
+// the 2.5km NWS grid produces identical forecasts across Fargo's ~6-mile area.
+const NWS_OFFICE   = 'FGF';
+const NWS_GRID_X   = 65;
+const NWS_GRID_Y   = 57;
+
+// NWS public zone code for Cass County, ND — used for the alerts endpoint.
+const NWS_ALERT_ZONE = 'NDZ039';
+
+// How many hourly periods to skip between slots in the today panel strip.
+// 2 = show every other hour (NOW, 2 PM, 4 PM, 6 PM...).
+// Increase if the strip feels crowded; decrease for more granularity.
+const WEATHER_HOUR_INTERVAL = 2;
+
+// Width in pixels of the hourly weather strip inside the today panel body.
+const WEATHER_STRIP_WIDTH = 75;
+
+// Size in pixels of the SVG weather icons in the hourly strip.
+// Should be close to the strip's temperature font size for visual balance.
+const WEATHER_ICON_SIZE = 18;
+
+// Edge cache TTL (seconds) for NWS daily and hourly forecasts.
+// NWS updates daily forecasts ~4 times per day and hourly forecasts ~once per hour.
+// 3600 (1 hour) is appropriate — lower if forecast data appears stale.
+const NWS_FORECAST_CACHE_SECONDS = 3600;
+
+// Edge cache TTL (seconds) for NWS active alerts.
+// Alerts are near-real-time. 900 (15 minutes) matches the page cache interval.
+const NWS_ALERTS_CACHE_SECONDS = 900;
 
 
 // =============================================================================
@@ -122,7 +180,7 @@ export default {
     const layoutKey   = (layoutParam in LAYOUTS) ? layoutParam : DEFAULT_LAYOUT;
     const layout      = LAYOUTS[layoutKey];
 
-    // wide/full → split view.  split/tri → upcoming strip.
+    // wide/full → split view with weather.  split/tri → upcoming strip, no weather.
     const useStrip = (layoutKey === 'split' || layoutKey === 'tri');
 
     // --- Workers Cache API ---
@@ -144,15 +202,34 @@ export default {
 
     try {
 
-      // Fetch the raw ICS text from Nextcloud via WebDAV.
-      // Credentials are stored as Worker secrets — never in source code.
-      // An app password is used rather than the account password so it can
-      // be revoked independently without affecting the Nextcloud account.
-      const icsText = await fetchIcsFromNextcloud(
-        env.NEXTCLOUD_URL,
-        env.NEXTCLOUD_USERNAME,
-        env.NEXTCLOUD_PASSWORD
-      );
+      // Strip layouts only need the ICS file.
+      // Split layouts fetch the ICS and all three NWS endpoints in parallel to
+      // minimise total latency. Each NWS fetch catches its own errors and returns
+      // null on failure so the calendar renders without weather rather than
+      // returning an error page.
+      let icsText;
+      let dailyPeriods  = null;
+      let hourlyPeriods = null;
+      let alertFeatures = null;
+
+      if (useStrip) {
+        icsText = await fetchIcsFromNextcloud(
+          env.NEXTCLOUD_URL,
+          env.NEXTCLOUD_USERNAME,
+          env.NEXTCLOUD_PASSWORD
+        );
+      } else {
+        [icsText, dailyPeriods, hourlyPeriods, alertFeatures] = await Promise.all([
+          fetchIcsFromNextcloud(
+            env.NEXTCLOUD_URL,
+            env.NEXTCLOUD_USERNAME,
+            env.NEXTCLOUD_PASSWORD
+          ),
+          fetchNwsDaily(env.NWS_USER_AGENT),
+          fetchNwsHourly(env.NWS_USER_AGENT),
+          fetchNwsAlerts(env.NWS_USER_AGENT),
+        ]);
+      }
 
       if (!icsText) {
         return renderErrorPage(
@@ -174,7 +251,10 @@ export default {
       // Render the appropriate layout design.
       const html = useStrip
         ? buildStripLayout(events, displayDates, layout, layoutKey)
-        : buildSplitLayout(events, displayDates, layout, layoutKey);
+        : buildSplitLayout(
+            events, displayDates, layout, layoutKey,
+            dailyPeriods, hourlyPeriods, alertFeatures
+          );
 
       const response = new Response(html, {
         status: 200,
@@ -247,17 +327,6 @@ function getDisplayDates(todayStr, count) {
   return dates;
 }
 
-// Formats a YYYY-MM-DD string as a long label, e.g. "Monday, March 18".
-function formatDateLong(dateStr) {
-  const d = new Date(dateStr + 'T12:00:00Z');
-  return new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/Chicago',
-    weekday:  'long',
-    month:    'long',
-    day:      'numeric',
-  }).format(d);
-}
-
 // Formats a YYYY-MM-DD string as a short label, e.g. "Mon 3/18".
 function formatDateShort(dateStr) {
   const d = new Date(dateStr + 'T12:00:00Z');
@@ -288,6 +357,33 @@ function toLocalDateStr(date) {
     month:    '2-digit',
     day:      '2-digit',
   }).format(date);
+}
+
+// Formats an NWS hourly period start time as a short hour label, e.g. "2 PM".
+// NWS hourly periods always start on the hour so the minute is always :00.
+function formatHourLabel(date) {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Chicago',
+    hour:     'numeric',
+    hour12:   true,
+  }).format(date);
+}
+
+// Formats a timestamp as a short, clean hour string for alert timing labels.
+// Whole hours: "6 PM". Special cases: "noon", "midnight". With minutes: "6:30 PM".
+function formatHourOnly(date) {
+  if (!date) return '';
+  const raw = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Chicago',
+    hour:     'numeric',
+    minute:   '2-digit',
+    hour12:   true,
+  }).format(date);
+  // Remove ":00" from whole-hour times for cleaner display.
+  const clean = raw.replace(':00', '');
+  if (clean === '12 PM') return 'noon';
+  if (clean === '12 AM') return 'midnight';
+  return clean;
 }
 
 
@@ -335,6 +431,528 @@ async function fetchIcsFromNextcloud(nextcloudUrl, username, password) {
   }
 
   return await res.text();
+}
+
+
+// =============================================================================
+// NWS WEATHER FETCHES
+// =============================================================================
+// All three functions share the same pattern:
+//   - Set a User-Agent header (NWS requires this for all API requests).
+//   - Use cf.cacheTtl to let Cloudflare's edge cache hold NWS responses,
+//     reducing how often the Worker contacts api.weather.gov.
+//   - Return null on any error so callers can degrade gracefully.
+//
+// NWS_USER_AGENT is set in wrangler.toml as a plain [vars] entry and accessed
+// via env.NWS_USER_AGENT. It is not sensitive — it appears in outbound headers.
+
+// Fetches the 7-day daily forecast for the configured Fargo grid point.
+// Returns the periods array or null on failure.
+// Edge-cached for NWS_FORECAST_CACHE_SECONDS (daily forecasts update ~4x/day).
+async function fetchNwsDaily(userAgent) {
+  const url = (
+    'https://api.weather.gov/gridpoints/' +
+    NWS_OFFICE + '/' + NWS_GRID_X + ',' + NWS_GRID_Y +
+    '/forecast'
+  );
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': userAgent, 'Accept': 'application/geo+json' },
+      cf: { cacheTtl: NWS_FORECAST_CACHE_SECONDS },
+    });
+    if (!res.ok) {
+      console.error('NWS daily forecast fetch failed (' + res.status + ')');
+      return null;
+    }
+    const data = await res.json();
+    return (data.properties && data.properties.periods) ? data.properties.periods : null;
+  } catch (e) {
+    console.error('NWS daily forecast error:', e);
+    return null;
+  }
+}
+
+// Fetches the 7-day hourly forecast for the configured Fargo grid point.
+// Returns the periods array or null on failure.
+// Edge-cached for NWS_FORECAST_CACHE_SECONDS (hourly forecasts update ~once/hour).
+async function fetchNwsHourly(userAgent) {
+  const url = (
+    'https://api.weather.gov/gridpoints/' +
+    NWS_OFFICE + '/' + NWS_GRID_X + ',' + NWS_GRID_Y +
+    '/forecast/hourly'
+  );
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': userAgent, 'Accept': 'application/geo+json' },
+      cf: { cacheTtl: NWS_FORECAST_CACHE_SECONDS },
+    });
+    if (!res.ok) {
+      console.error('NWS hourly forecast fetch failed (' + res.status + ')');
+      return null;
+    }
+    const data = await res.json();
+    return (data.properties && data.properties.periods) ? data.properties.periods : null;
+  } catch (e) {
+    console.error('NWS hourly forecast error:', e);
+    return null;
+  }
+}
+
+// Fetches active weather alerts for the configured Cass County zone (NDZ039).
+// Returns the features array or null on failure.
+// Edge-cached for NWS_ALERTS_CACHE_SECONDS (matches page cache interval).
+async function fetchNwsAlerts(userAgent) {
+  const url = 'https://api.weather.gov/alerts/active?zone=' + NWS_ALERT_ZONE;
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': userAgent, 'Accept': 'application/geo+json' },
+      cf: { cacheTtl: NWS_ALERTS_CACHE_SECONDS },
+    });
+    if (!res.ok) {
+      console.error('NWS alerts fetch failed (' + res.status + ')');
+      return null;
+    }
+    const data = await res.json();
+    return (data.features && Array.isArray(data.features)) ? data.features : null;
+  } catch (e) {
+    console.error('NWS alerts error:', e);
+    return null;
+  }
+}
+
+
+// =============================================================================
+// NWS DATA PROCESSING
+// =============================================================================
+
+// Builds a map of { 'YYYY-MM-DD': { high, low, shortForecast, wind } } from
+// NWS daily forecast periods. Daytime periods supply the high temp and
+// primary condition; nighttime periods supply the low. If only one period
+// type is available for a date (e.g. daytime has already passed), only that
+// value is set and callers omit the missing value from the display.
+function buildDailyWeatherMap(periods) {
+  const map = {};
+  if (!periods) return map;
+
+  for (const p of periods) {
+    const startDate = new Date(p.startTime);
+    const dateStr   = toLocalDateStr(startDate);
+
+    if (!map[dateStr]) {
+      map[dateStr] = { high: null, low: null, shortForecast: null, wind: null };
+    }
+
+    if (p.isDaytime) {
+      map[dateStr].high          = p.temperature;
+      map[dateStr].shortForecast = p.shortForecast;
+      map[dateStr].wind          = (p.windDirection || '') + ' ' + (p.windSpeed || '');
+    } else {
+      map[dateStr].low = p.temperature;
+      // Use nighttime condition/wind only if no daytime period exists for this date.
+      if (!map[dateStr].shortForecast) {
+        map[dateStr].shortForecast = p.shortForecast;
+        map[dateStr].wind          = (p.windDirection || '') + ' ' + (p.windSpeed || '');
+      }
+    }
+  }
+
+  return map;
+}
+
+// Builds the list of hourly slots to render in the today panel's weather strip.
+// Starts from the current hour (labeled "NOW") and takes every
+// WEATHER_HOUR_INTERVAL-th period for the remainder of today only.
+// maxSlots caps the list so no slot extends beyond the panel's visible area.
+// Returns an array of { isNow, label, temp, emoji } objects, or [] if no data.
+function buildHourlyStripSlots(hourlyPeriods, todayStr, now, maxSlots) {
+  if (!hourlyPeriods) return [];
+
+  // Floor to the start of the current UTC hour so the current period
+  // (whose startTime equals that hour boundary) is included.
+  const currentHourMs = now.getTime() - (now.getTime() % 3600000);
+
+  // Collect today's periods that start at or after the current hour.
+  const todayPeriods = hourlyPeriods.filter(function(p) {
+    const pStart = new Date(p.startTime);
+    return (
+      toLocalDateStr(pStart) === todayStr &&
+      pStart.getTime() >= currentHourMs
+    );
+  });
+
+  if (todayPeriods.length === 0) return [];
+
+  const slots = [];
+  let nextIndex = 0;
+
+  for (let i = 0; i < todayPeriods.length; i++) {
+    if (slots.length >= maxSlots) break;
+    if (i !== nextIndex) continue;
+    const p = todayPeriods[i];
+    slots.push({
+      isNow: slots.length === 0,
+      label: slots.length === 0 ? 'NOW' : formatHourLabel(new Date(p.startTime)),
+      temp:  p.temperature,
+      svg:   getConditionSvg(p.shortForecast, WEATHER_ICON_SIZE),
+    });
+    nextIndex += WEATHER_HOUR_INTERVAL;
+  }
+
+  return slots;
+}
+
+// Maps an NWS shortForecast string to a representative weather emoji.
+// Checks are case-insensitive and ordered from most to least specific to
+// prevent broad matches (e.g. "rain") from shadowing specific ones
+// (e.g. "thunderstorm" or "freezing rain").
+// Returns the dot color for a given NWS shortForecast string.
+// Used in column headers as a small colored circle before the condition text,
+// providing a quick visual category cue without requiring an emoji font.
+// Color categories:
+//   Yellow      — sunny / clear
+//   Soft yellow — partly cloudy / partly sunny
+//   Amber       — thunderstorm
+//   Light blue  — snow / blizzard
+//   Blue-purple — wintry mix / sleet / freezing precipitation
+//   Bright blue — rain / showers / drizzle
+//   Gray-blue   — cloudy / fog / wind / overcast / default
+function getConditionColor(shortForecast) {
+  if (!shortForecast) return '#b0c4d4'; // default: gray-blue
+  const f = shortForecast.toLowerCase();
+
+  if (f.includes('thunderstorm'))                   return '#f0a040'; // amber
+  if (f.includes('blizzard') || f.includes('snow')) return '#a8d8f0'; // light blue
+  if (f.includes('freezing rain') ||
+      f.includes('freezing drizzle') ||
+      f.includes('wintry mix') ||
+      f.includes('sleet'))                          return '#a0b0e0'; // blue-purple
+  if (f.includes('rain')    ||
+      f.includes('shower')  ||
+      f.includes('drizzle'))                        return '#60b0f0'; // bright blue
+  if (f.includes('fog')     || f.includes('haze') ||
+      f.includes('smoke')   || f.includes('mist') ||
+      f.includes('blustery')|| f.includes('windy')||
+      f.includes('breezy')  || f.includes('cloudy')||
+      f.includes('overcast'))                       return '#b0c4d4'; // gray-blue
+  if (f.includes('partly cloudy') ||
+      f.includes('partly sunny'))                   return '#c8a830'; // soft yellow
+  if (f.includes('mostly sunny')  ||
+      f.includes('mostly clear')  ||
+      f.includes('sunny')         ||
+      f.includes('clear'))                          return '#f0c040'; // yellow
+  return '#b0c4d4'; // default: gray-blue
+}
+
+// Returns an inline SVG weather icon string for a given NWS shortForecast.
+// Used in the hourly weather strip where there is no accompanying condition text.
+// sizePx controls the rendered square size of the SVG element.
+// All paths use a viewBox of "0 0 24 24" for consistent coordinate math.
+// Colors are hardcoded (not CSS variables) because this SVG renders inside a
+// known dark background and must not invert in light mode.
+function getConditionSvg(shortForecast, sizePx) {
+  if (!shortForecast) return buildWeatherSvg(sizePx, svgDefault());
+  const f = shortForecast.toLowerCase();
+
+  if (f.includes('thunderstorm'))                   return buildWeatherSvg(sizePx, svgThunderstorm());
+  if (f.includes('blizzard') || f.includes('snow')) return buildWeatherSvg(sizePx, svgSnow());
+  if (f.includes('freezing rain') ||
+      f.includes('freezing drizzle') ||
+      f.includes('wintry mix') ||
+      f.includes('sleet'))                          return buildWeatherSvg(sizePx, svgWintryMix());
+  if (f.includes('rain') || f.includes('shower'))  return buildWeatherSvg(sizePx, svgRain());
+  if (f.includes('drizzle'))                        return buildWeatherSvg(sizePx, svgDrizzle());
+  if (f.includes('fog')   || f.includes('haze') ||
+      f.includes('smoke') || f.includes('mist'))   return buildWeatherSvg(sizePx, svgFog());
+  if (f.includes('blustery') || f.includes('windy') ||
+      f.includes('breezy'))                         return buildWeatherSvg(sizePx, svgWind());
+  if (f.includes('mostly cloudy'))                  return buildWeatherSvg(sizePx, svgMostlyCloudy());
+  if (f.includes('partly cloudy') ||
+      f.includes('partly sunny'))                   return buildWeatherSvg(sizePx, svgPartlyCloudy());
+  if (f.includes('mostly sunny') ||
+      f.includes('mostly clear'))                   return buildWeatherSvg(sizePx, svgMostlySunny());
+  if (f.includes('sunny') || f.includes('clear'))  return buildWeatherSvg(sizePx, svgSunny());
+  if (f.includes('cloudy') || f.includes('overcast')) return buildWeatherSvg(sizePx, svgCloudy());
+  return buildWeatherSvg(sizePx, svgDefault());
+}
+
+// Wraps SVG path content in a sized SVG element.
+function buildWeatherSvg(sizePx, inner) {
+  return (
+    '<svg xmlns="http://www.w3.org/2000/svg"' +
+    ' width="' + sizePx + '" height="' + sizePx + '"' +
+    ' viewBox="0 0 24 24"' +
+    ' style="display:block;flex-shrink:0;">' +
+    inner +
+    '</svg>'
+  );
+}
+
+// Sun: filled circle + 8 short rays.
+function svgSunny() {
+  return (
+    '<circle cx="12" cy="12" r="4.5" fill="#f0c040"/>' +
+    '<line x1="12" y1="2" x2="12" y2="5" stroke="#f0c040" stroke-width="2" stroke-linecap="round"/>' +
+    '<line x1="12" y1="19" x2="12" y2="22" stroke="#f0c040" stroke-width="2" stroke-linecap="round"/>' +
+    '<line x1="2" y1="12" x2="5" y2="12" stroke="#f0c040" stroke-width="2" stroke-linecap="round"/>' +
+    '<line x1="19" y1="12" x2="22" y2="12" stroke="#f0c040" stroke-width="2" stroke-linecap="round"/>' +
+    '<line x1="4.9" y1="4.9" x2="7.1" y2="7.1" stroke="#f0c040" stroke-width="2" stroke-linecap="round"/>' +
+    '<line x1="16.9" y1="16.9" x2="19.1" y2="19.1" stroke="#f0c040" stroke-width="2" stroke-linecap="round"/>' +
+    '<line x1="16.9" y1="7.1" x2="19.1" y2="4.9" stroke="#f0c040" stroke-width="2" stroke-linecap="round"/>' +
+    '<line x1="4.9" y1="19.1" x2="7.1" y2="16.9" stroke="#f0c040" stroke-width="2" stroke-linecap="round"/>'
+  );
+}
+
+// Mostly sunny: sun (smaller, offset) + small cloud overlapping.
+function svgMostlySunny() {
+  return (
+    '<circle cx="9" cy="9" r="3.5" fill="#f0c040"/>' +
+    '<line x1="9" y1="2" x2="9" y2="4.5" stroke="#f0c040" stroke-width="1.8" stroke-linecap="round"/>' +
+    '<line x1="9" y1="13.5" x2="9" y2="16" stroke="#f0c040" stroke-width="1.8" stroke-linecap="round"/>' +
+    '<line x1="2" y1="9" x2="4.5" y2="9" stroke="#f0c040" stroke-width="1.8" stroke-linecap="round"/>' +
+    '<line x1="13.5" y1="9" x2="16" y2="9" stroke="#f0c040" stroke-width="1.8" stroke-linecap="round"/>' +
+    '<line x1="3.8" y1="3.8" x2="5.5" y2="5.5" stroke="#f0c040" stroke-width="1.8" stroke-linecap="round"/>' +
+    '<line x1="12.5" y1="12.5" x2="14.2" y2="14.2" stroke="#f0c040" stroke-width="1.8" stroke-linecap="round"/>' +
+    '<path d="M10 16 a4 4 0 0 1 8 0 a2.5 2.5 0 0 1 0 5 H10 a3 3 0 0 1 0-5Z" fill="#5b7a94"/>'
+  );
+}
+
+// Partly cloudy: sun peeking behind a larger cloud.
+function svgPartlyCloudy() {
+  return (
+    '<circle cx="8" cy="8" r="3" fill="#c8a830"/>' +
+    '<line x1="8" y1="2" x2="8" y2="4" stroke="#c8a830" stroke-width="1.8" stroke-linecap="round"/>' +
+    '<line x1="8" y1="12" x2="8" y2="14" stroke="#c8a830" stroke-width="1.8" stroke-linecap="round"/>' +
+    '<line x1="2" y1="8" x2="4" y2="8" stroke="#c8a830" stroke-width="1.8" stroke-linecap="round"/>' +
+    '<line x1="12" y1="8" x2="14" y2="8" stroke="#c8a830" stroke-width="1.8" stroke-linecap="round"/>' +
+    '<path d="M8 15 a5 5 0 0 1 10 0 a3 3 0 0 1 0 6 H8 a4 4 0 0 1 0-6Z" fill="#4a6880"/>'
+  );
+}
+
+// Mostly cloudy: tiny sun peek + large cloud dominating.
+function svgMostlyCloudy() {
+  return (
+    '<circle cx="7" cy="7" r="2.5" fill="#c8a830" opacity="0.8"/>' +
+    '<path d="M6 13 a6 6 0 0 1 12 0 a3.5 3.5 0 0 1 0 7 H6 a4.5 4.5 0 0 1 0-7Z" fill="#4a6880"/>' +
+    '<path d="M4 16 a4 4 0 0 1 8 0 a2.5 2.5 0 0 1 0 5 H4 a3 3 0 0 1 0-5Z" fill="#5b7a94"/>'
+  );
+}
+
+// Cloudy: two overlapping cloud shapes, no sun.
+function svgCloudy() {
+  return (
+    '<path d="M5 14 a6 6 0 0 1 12 0 a3.5 3.5 0 0 1 0 7 H5 a4.5 4.5 0 0 1 0-7Z" fill="#4a6880"/>' +
+    '<path d="M3 17 a4 4 0 0 1 8 0 a2.5 2.5 0 0 1 0 5 H3 a3 3 0 0 1 0-5Z" fill="#5b7a94"/>'
+  );
+}
+
+// Rain: cloud + 3 angled rain lines.
+function svgRain() {
+  return (
+    '<path d="M4 10 a6 6 0 0 1 12 0 a3.5 3.5 0 0 1 0 7 H4 a4.5 4.5 0 0 1 0-7Z" fill="#4a6880"/>' +
+    '<line x1="7" y1="19" x2="5" y2="23" stroke="#60b0f0" stroke-width="2" stroke-linecap="round"/>' +
+    '<line x1="12" y1="19" x2="10" y2="23" stroke="#60b0f0" stroke-width="2" stroke-linecap="round"/>' +
+    '<line x1="17" y1="19" x2="15" y2="23" stroke="#60b0f0" stroke-width="2" stroke-linecap="round"/>'
+  );
+}
+
+// Drizzle: cloud + lighter, more numerous short lines.
+function svgDrizzle() {
+  return (
+    '<path d="M4 10 a6 6 0 0 1 12 0 a3.5 3.5 0 0 1 0 7 H4 a4.5 4.5 0 0 1 0-7Z" fill="#4a6880"/>' +
+    '<line x1="7" y1="19" x2="6" y2="22" stroke="#60b0f0" stroke-width="1.5" stroke-linecap="round"/>' +
+    '<line x1="11" y1="19" x2="10" y2="22" stroke="#60b0f0" stroke-width="1.5" stroke-linecap="round"/>' +
+    '<line x1="15" y1="19" x2="14" y2="22" stroke="#60b0f0" stroke-width="1.5" stroke-linecap="round"/>' +
+    '<line x1="9" y1="22" x2="8" y2="24" stroke="#60b0f0" stroke-width="1.5" stroke-linecap="round"/>' +
+    '<line x1="13" y1="22" x2="12" y2="24" stroke="#60b0f0" stroke-width="1.5" stroke-linecap="round"/>'
+  );
+}
+
+// Snow: cloud + 5 small filled dots.
+function svgSnow() {
+  return (
+    '<path d="M4 9 a6 6 0 0 1 12 0 a3.5 3.5 0 0 1 0 7 H4 a4.5 4.5 0 0 1 0-7Z" fill="#4a6880"/>' +
+    '<circle cx="7"  cy="20" r="1.8" fill="#a8d8f0"/>' +
+    '<circle cx="12" cy="18" r="1.8" fill="#a8d8f0"/>' +
+    '<circle cx="17" cy="20" r="1.8" fill="#a8d8f0"/>' +
+    '<circle cx="9"  cy="23" r="1.8" fill="#a8d8f0"/>' +
+    '<circle cx="15" cy="23" r="1.8" fill="#a8d8f0"/>'
+  );
+}
+
+// Wintry mix: cloud + alternating rain line and snow dot.
+function svgWintryMix() {
+  return (
+    '<path d="M4 9 a6 6 0 0 1 12 0 a3.5 3.5 0 0 1 0 7 H4 a4.5 4.5 0 0 1 0-7Z" fill="#4a6880"/>' +
+    '<line x1="7"  y1="18" x2="6"  y2="22" stroke="#60b0f0" stroke-width="2" stroke-linecap="round"/>' +
+    '<circle cx="12" cy="20" r="2" fill="#a0b0e0"/>' +
+    '<line x1="17" y1="18" x2="16" y2="22" stroke="#60b0f0" stroke-width="2" stroke-linecap="round"/>' +
+    '<circle cx="9"  cy="23" r="1.8" fill="#a0b0e0"/>' +
+    '<circle cx="15" cy="23" r="1.8" fill="#a0b0e0"/>'
+  );
+}
+
+// Fog: three horizontal lines of decreasing length.
+function svgFog() {
+  return (
+    '<line x1="2"  y1="8"  x2="22" y2="8"  stroke="#b0c4d4" stroke-width="2.5" stroke-linecap="round"/>' +
+    '<line x1="4"  y1="12" x2="20" y2="12" stroke="#b0c4d4" stroke-width="2.5" stroke-linecap="round"/>' +
+    '<line x1="2"  y1="16" x2="22" y2="16" stroke="#b0c4d4" stroke-width="2.5" stroke-linecap="round"/>' +
+    '<line x1="6"  y1="20" x2="18" y2="20" stroke="#b0c4d4" stroke-width="2"   stroke-linecap="round"/>'
+  );
+}
+
+// Wind: three curved horizontal lines (longer, shorter, shortest).
+function svgWind() {
+  return (
+    '<path d="M2 8 Q10 8 14 4 a4 4 0 0 1 4 4 a4 4 0 0 1-4 4 H2" fill="none" stroke="#b0c4d4" stroke-width="2" stroke-linecap="round"/>' +
+    '<path d="M2 14 Q8 14 11 11 a3 3 0 0 1 3 3 a3 3 0 0 1-3 3 H2" fill="none" stroke="#b0c4d4" stroke-width="2" stroke-linecap="round"/>' +
+    '<line x1="2" y1="19" x2="16" y2="19" stroke="#b0c4d4" stroke-width="2" stroke-linecap="round"/>'
+  );
+}
+
+// Thunderstorm: dark cloud + lightning bolt.
+function svgThunderstorm() {
+  return (
+    '<path d="M3 8 a6 6 0 0 1 12 0 a3.5 3.5 0 0 1 0 7 H3 a4.5 4.5 0 0 1 0-7Z" fill="#3a5068"/>' +
+    '<polyline points="13,15 9,21 13,21 9,27" fill="none" stroke="#f0d040" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>'
+  );
+}
+
+// Default: simple thermometer shape.
+function svgDefault() {
+  return (
+    '<rect x="10" y="3" width="4" height="13" rx="2" fill="#b0c4d4"/>' +
+    '<circle cx="12" cy="18" r="4" fill="#b0c4d4"/>' +
+    '<rect x="11" y="6" width="2" height="9" fill="#0d1b2a"/>'
+  );
+}
+
+// Returns the list of alert features that should appear as a future badge on
+// the given date's column header.
+//
+// For today: only alerts not yet started (onset > now). Already-active alerts
+//   are shown in the top banner and are not repeated as a badge.
+// For future days: all non-expired alerts whose onset-to-expires window
+//   overlaps that calendar day, regardless of whether they have started yet.
+//
+// Filters out test/cancelled alerts (status !== 'Actual' or messageType === 'Cancel').
+function getBadgeAlertsForDate(alertFeatures, dateStr, todayStr, now) {
+  if (!alertFeatures) return [];
+
+  return alertFeatures.filter(function(f) {
+    const p = f.properties;
+    if (!p)                           return false;
+    if (p.status !== 'Actual')        return false;
+    if (p.messageType === 'Cancel')   return false;
+
+    const onset   = p.onset   ? new Date(p.onset)   : null;
+    const expires = p.expires ? new Date(p.expires) : null;
+    if (!onset || !expires)           return false;
+    if (expires <= now)               return false; // product already superseded
+
+    // For date-range overlap and display, prefer p.ends (actual weather event end)
+    // over p.expires (alert product expiry). NWS sets expires to when they will
+    // issue the next update, which can be hours before the hazard actually ends.
+    // p.ends may be null for some alert types, so fall back to expires.
+    const eventEnd       = p.ends ? new Date(p.ends) : expires;
+    const onsetDateStr   = toLocalDateStr(onset);
+    const expireDateStr  = toLocalDateStr(eventEnd);
+
+    // Alert must overlap this date.
+    if (onsetDateStr > dateStr || expireDateStr < dateStr) return false;
+
+    // For today: only show alerts that haven't started yet.
+    if (dateStr === todayStr) return onset > now;
+
+    // For future days: show all overlapping, non-expired alerts.
+    return true;
+  });
+}
+
+// Returns the list of currently active alert features (onset <= now < expires).
+// These are displayed as full-width banners above the panel row.
+function getActiveAlerts(alertFeatures, now) {
+  if (!alertFeatures) return [];
+
+  return alertFeatures.filter(function(f) {
+    const p = f.properties;
+    if (!p || p.status !== 'Actual' || p.messageType === 'Cancel') return false;
+    const onset   = p.onset   ? new Date(p.onset)   : null;
+    const expires = p.expires ? new Date(p.expires) : null;
+    if (!onset || !expires) return false;
+    return onset <= now && expires > now;
+  });
+}
+
+// Sorts an alert array by descending severity so the most critical alert
+// appears first when displaying multiple simultaneous alerts.
+function sortAlertsBySeverity(alerts) {
+  const order = { extreme: 0, severe: 1, moderate: 2, minor: 3 };
+  return alerts.slice().sort(function(a, b) {
+    const sa = order[(a.properties.severity || '').toLowerCase()];
+    const sb = order[(b.properties.severity || '').toLowerCase()];
+    return (sa !== undefined ? sa : 4) - (sb !== undefined ? sb : 4);
+  });
+}
+
+// Returns the CSS class for an active alert banner (top of page).
+function getAlertBannerClass(alertProperties) {
+  const s = (alertProperties.severity || '').toLowerCase();
+  if (s === 'extreme' || s === 'severe') return 'alert-warning';
+  if (s === 'moderate')                  return 'alert-watch';
+  return 'alert-advisory';
+}
+
+// Returns the CSS class for a future alert badge in a column header.
+function getAlertBadgeClass(alertProperties) {
+  const s = (alertProperties.severity || '').toLowerCase();
+  if (s === 'extreme' || s === 'severe') return 'badge-warning';
+  if (s === 'moderate')                  return 'badge-watch';
+  return 'badge-advisory';
+}
+
+// Returns a short timing qualifier for a future alert badge on a specific date:
+//   "begins 6 PM"  — alert starts on this date
+//   "until noon"   — alert ends on this date (started on a prior date)
+//   "all day"      — alert spans the entire date entirely
+// Uses p.ends (actual weather event end) in preference to p.expires (product
+// expiry) so the displayed time matches what other weather services show.
+function formatAlertTiming(alertProperties, dateStr) {
+  const onset    = alertProperties.onset ? new Date(alertProperties.onset) : null;
+  // Prefer ends (actual hazard end time) over expires (product message expiry).
+  const eventEnd = (alertProperties.ends || alertProperties.expires)
+    ? new Date(alertProperties.ends || alertProperties.expires)
+    : null;
+
+  const onsetDateStr  = onset    ? toLocalDateStr(onset)    : null;
+  const expireDateStr = eventEnd ? toLocalDateStr(eventEnd) : null;
+
+  if (onsetDateStr === dateStr)  return 'begins ' + formatHourOnly(onset);
+  if (expireDateStr === dateStr) return 'until '  + formatHourOnly(eventEnd);
+  return 'all day';
+}
+
+// Formats the expiry time of an active alert for the top-of-page banner.
+// If the alert expires today: "until 6 PM" (no day name — today is unambiguous).
+// If the alert expires on a future day: "until Thursday 6 PM".
+// This prevents confusion when an alert expires at, e.g., 1 PM on the same day.
+function formatExpiresLabel(expiresStr, todayStr) {
+  if (!expiresStr) return '';
+  const d           = new Date(expiresStr);
+  const expDateStr  = toLocalDateStr(d);
+  const timeLabel   = formatHourOnly(d);
+
+  if (expDateStr === todayStr) {
+    // Expires today — show time only.
+    return 'until ' + timeLabel;
+  }
+
+  // Expires on a future day — include the day name.
+  const day = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Chicago',
+    weekday:  'long',
+  }).format(d);
+  return 'until ' + day + ' ' + timeLabel;
 }
 
 
@@ -613,7 +1231,7 @@ function windowsToIana(windowsTz) {
 
 
 // =============================================================================
-// EVENT FILTERING
+// EVENT FILTERING AND SORTING
 // =============================================================================
 
 // Applies FILTER_EXACT and FILTER_CONTAINS rules to remove matching events.
@@ -634,6 +1252,21 @@ function applyFilters(events) {
     }
 
     return true;
+  });
+}
+
+// Sorts an array of all-day events so that events with a defined ALLDAY_COLORS
+// entry always appear above events without one. Within each group the original
+// ICS order is preserved. This ensures shift banners (A/B/C Shift) always
+// appear at the top of each day regardless of how Exchange exports the calendar.
+function sortAllDayEvents(allDayEvents) {
+  const colorKeys = Object.keys(ALLDAY_COLORS).map(function(k) {
+    return k.toLowerCase();
+  });
+  return allDayEvents.slice().sort(function(a, b) {
+    const aHasColor = colorKeys.includes((a.summary || '').trim().toLowerCase()) ? 0 : 1;
+    const bHasColor = colorKeys.includes((b.summary || '').trim().toLowerCase()) ? 0 : 1;
+    return aHasColor - bHasColor;
   });
 }
 
@@ -705,43 +1338,160 @@ function buildHtmlDoc(width, height, styles, body) {
 // =============================================================================
 // SPLIT LAYOUT — wide / full
 // =============================================================================
-// Left panel: today's events with prominent time and title display.
-// Right panel: remaining days as equal-width columns.
-// All-day events rendered as colored banners at the top of each panel.
+// Left panel: today's daily forecast in header + hourly weather strip on the
+//   left side of the body + stacked events (time above title) on the right.
+// Right panel: day columns with daily forecast in headers and stacked events.
+// Alert banners: active NWS alerts shown above the panel row.
+// Alert badges: future alerts shown as colored pills in each affected column
+//   header. All headers (including today's) render exactly maxBadgeCount badge
+//   rows so every header is the same height regardless of alert count.
+//
+// Today's header uses the same row structure and font sizes as the day column
+// headers so both panels are always the same header height.
 
-function buildSplitLayout(events, displayDates, layout, layoutKey) {
+function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods, hourlyPeriods, alertFeatures) {
   const { width, height } = layout;
+  const now      = new Date();
+  const todayStr = displayDates[0];
 
-  // Show a "Station Calendar" title label only in the full layout.
-  // Other layouts have a built-in title bar from the display system.
+  // Full layout shows an "FFD Calendar" title label; other layouts have their
+  // own title bar from the display system.
   const showLabel = (layoutKey === 'full');
 
-  // --- Sizing — all values derived proportionally from layout dimensions ---
-  const pad           = Math.floor(height * 0.030);
-  const labelHeight   = showLabel ? Math.floor(height * 0.065) : 0;
-  const panelHeight   = height - (pad * 2) - labelHeight;
-  
-  // Shrink the today panel proportionally when more day columns are shown
-  // so the right panel columns don't get clipped on narrower layouts.
-  const rightDayCount  = displayDates.length - 1;
-  const leftRatio      = rightDayCount <= 4 ? 0.36 : 0.30;
-  const leftWidth      = Math.floor(width * leftRatio);
+  // --- Sizing — all proportional to layout height so wide and full both look correct ---
+  const pad         = Math.floor(height * 0.030);
+  const labelHeight = showLabel ? Math.floor(height * 0.065) : 0;
 
-  const rightWidth    = width - leftWidth - (pad * 3);
-  const todayHeaderFont = Math.floor(height * 0.046);
-  const todayDateFont   = Math.floor(height * 0.030);
-  const todayTimeFont   = Math.floor(height * 0.040);
-  const todayAmPmFont   = Math.floor(height * 0.026);
-  const todayTitleFont  = Math.floor(height * 0.030);
-  const todayLocFont    = Math.floor(height * 0.022);
-  const dayHeaderFont   = Math.floor(height * 0.028);
-  const dayTimeFont     = Math.floor(height * 0.022);
-  const dayTitleFont    = Math.floor(height * 0.023);
-  const bannerFont      = Math.floor(height * 0.022);
-  const noEventsFont    = Math.floor(height * 0.024);
-  const labelFont       = Math.floor(height * 0.030);
+  // Today panel width. Narrowed slightly when 5 day columns are shown.
+  const rightDayCount = displayDates.length - 1;
+  const leftRatio     = rightDayCount <= 4 ? 0.36 : 0.30;
+  const leftWidth     = Math.floor(width * leftRatio);
 
-  // --- Styles ---
+  // ── Font sizes ──
+  // Header fonts — identical values used in BOTH the today header and day column
+  // headers. CSS grid row 1 sizes to the tallest header automatically so all
+  // headers are always the same height without any JS height estimation.
+  const colDateFont     = Math.floor(height * 0.035); // date line — matches main dayHeaderFont
+  const colWxFont       = Math.floor(height * 0.025); // weather rows (H/L, condition, wind)
+  const colWindFont     = Math.floor(colWxFont * 0.95); // wind information in all columns
+  const badgeFont       = Math.floor(height * 0.03); // future weather alert badge text
+
+  // Body fonts — today panel events.
+  const evtTimeFont     = Math.floor(height * 0.030); // stacked event time label
+  const evtTitleFont    = Math.floor(height * 0.033); // event title — matches main todayTitleFont
+  const evtLocFont      = Math.floor(height * 0.025); // event location — matches main todayLocFont
+
+  // Body fonts — day column events.
+  const dayTimeFont     = Math.floor(height * 0.023); // time label
+  const dayTitleFont    = Math.floor(height * 0.026); // event title
+
+  // Hourly weather strip fonts.
+  const wxTimeFont      = Math.floor(height * 0.020); // hour label ("NOW", "2 PM")
+  const wxTempFont      = Math.floor(height * 0.024); // temperature
+  const wxEmojiFont     = Math.floor(height * 0.024); // condition emoji
+
+  // Shared.
+  const bannerFont      = Math.floor(height * 0.025); // all-day shift banners
+  const alertBannerFont = Math.floor(height * 0.033); // active weather alert banner text
+  const noEventsFont    = Math.floor(height * 0.028); // "No events" — matches main
+  const labelFont       = Math.floor(height * 0.040); // "FFD Calendar" title (full only)
+
+  // hdrGap: gap between flex rows inside each header (date, H/L, condition, wind, badges).
+  const hdrGap = Math.floor(pad * 0.16);
+
+  // --- Process NWS data ---
+  const dailyWeatherMap = buildDailyWeatherMap(dailyPeriods);
+  const activeAlerts    = sortAlertsBySeverity(getActiveAlerts(alertFeatures, now));
+
+  // Per-date future alert badge lists and the overall maximum count.
+  // Every column header renders exactly maxBadgeCount badge-row elements
+  // (real badges + invisible placeholders) so all headers have the same
+  // number of badge rows. The CSS grid ensures all headers are the same
+  // total height by stretching to match the tallest column.
+  const badgesPerDate = {};
+  for (const dateStr of displayDates) {
+    const raw = getBadgeAlertsForDate(alertFeatures, dateStr, todayStr, now);
+    badgesPerDate[dateStr] = sortAlertsBySeverity(raw);
+  }
+  const maxBadgeCount = displayDates.reduce(function(max, d) {
+    return Math.max(max, badgesPerDate[d].length);
+  }, 0);
+
+  // Each badge element is a fixed 2-text-line height + vertical padding + 2px borders.
+  // The +2 accounts for the 1px top + 1px bottom border on .future-alert-badge which are
+  // subtracted from the content area by box-sizing:border-box.
+  // This same value is the CSS height on .future-alert-badge so real badges and
+  // placeholders are always the same height regardless of text content.
+  const lh        = 1.4;
+  const badgeRowH = Math.ceil(badgeFont * lh) * 2 + Math.floor(pad * 0.12) * 2 + 2;
+
+  // --- Compute max hourly strip slots ---
+  // The actual header height is determined by the CSS grid at browser render time
+  // (it sizes to the tallest content across all columns), so the Worker cannot know
+  // it precisely. We use a conservative worst-case estimate to ensure no hourly slot
+  // is ever clipped by overflow. On calm-weather days the strip may show 1-2 fewer
+  // slots than theoretically possible, but this is visually insignificant.
+  //
+  // Worst-case header height assumes:
+  //   - condition wraps to 3 lines (longest possible NWS forecast text)
+  //   - actual maxBadgeCount badge rows (we know this exactly)
+  const hdrPad  = Math.floor(pad * 0.38) * 2; // top + bottom padding on headers
+  const worstCondLines  = 3;
+  const worstHdrContent = Math.ceil(colDateFont * lh)
+                        + Math.ceil(colWxFont   * lh)
+                        + Math.ceil(colWxFont   * lh) * worstCondLines
+                        + Math.ceil(colWindFont * lh)
+                        + (hdrGap * 3);
+  const badgesBlock     = maxBadgeCount > 0
+    ? hdrGap + (maxBadgeCount * badgeRowH) + ((maxBadgeCount - 1) * hdrGap)
+    : 0;
+  const worstHdrHeight  = hdrPad + worstHdrContent + badgesBlock;
+
+  // Alert strip height: each banner is its font + vertical padding; gaps between banners.
+  const bannerRowH  = alertBannerFont + Math.floor(pad * 0.3) * 2;
+  const bannerGap   = Math.floor(pad * 0.25);
+  const alertStripH = activeAlerts.length > 0
+    ? (activeAlerts.length * bannerRowH) + ((activeAlerts.length - 1) * bannerGap)
+    : 0;
+
+  // Outer gap between flex children (label, alert strip, panels grid).
+  const outerGap = Math.floor(pad * 0.5);
+
+  // Available height for the panels grid.
+  let panelsH = height - (pad * 2);
+  if (showLabel)         panelsH -= labelHeight + outerGap;
+  if (alertStripH > 0)   panelsH -= alertStripH + outerGap;
+
+  // Available body height = panels height minus worst-case header.
+  const stripPadV = Math.floor(pad * 0.3) * 2;
+  const bodyH     = panelsH - worstHdrHeight;
+
+  // Per-slot height: vertical padding + time label + margin + temp + margin + emoji + divider.
+  const slotPadV = Math.floor(pad * 0.28) + Math.floor(pad * 0.22);
+  const slotH    = slotPadV
+                 + wxTimeFont + 3
+                 + wxTempFont + 2
+                 + wxEmojiFont
+                 + Math.floor(pad * 0.22) + 1;
+
+  // Safety margin (0.85) ensures the last slot never grazes the body boundary.
+  const maxSlots = Math.max(1, Math.floor((bodyH - stripPadV) * 0.85 / slotH));
+
+  // Build hourly slots now that maxSlots is known.
+  const hourlySlots = buildHourlyStripSlots(hourlyPeriods, todayStr, now, maxSlots);
+
+  // --- CSS ---
+  // Layout approach: .panels is a CSS grid with (1 + rightDayCount) columns and
+  // 2 rows. Row 1 (auto height) holds all headers; row 2 (1fr) holds all bodies.
+  // The grid automatically sizes row 1 to the tallest header across all columns,
+  // so all headers are always the same height without any JS measurement.
+  // DOM order: today-header, all day-col-headers, today-body, all day-col-bodies.
+  //
+  // Visual structure per column:
+  //   today: bright-blue header (border-radius top) + dark-blue body (border-radius bottom)
+  //   days:  mid-blue header (border-radius top) + dark body (border-radius bottom)
+  const colsTemplate = leftWidth + 'px repeat(' + rightDayCount + ', 1fr)';
+
   const styles = (
     '*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }' +
     'html, body {' +
@@ -749,237 +1499,467 @@ function buildSplitLayout(events, displayDates, layout, layoutKey) {
     '  overflow: hidden; background: #0d1b2a; color: #dde6f0;' +
     '  font-family: Arial, Helvetica, sans-serif;' +
     '}' +
+
+    // Outer flex column — label (optional), alert strip (optional), panels grid.
     '.outer {' +
     '  width: '  + width  + 'px; height: ' + height + 'px;' +
-    '  padding: ' + pad   + 'px; display: flex; flex-direction: column;' +
+    '  padding: ' + pad + 'px;' +
+    '  display: flex; flex-direction: column;' +
+    '  gap: '     + outerGap + 'px;' +
     '}' +
 
-    // Title label (full layout only)
+    // "FFD Calendar" title — full layout only.
     (showLabel
       ? '.cal-label {' +
-        '  font-size: '       + labelFont + 'px; font-weight: 700;' +
+        '  font-size: '     + labelFont + 'px; font-weight: 700;' +
         '  letter-spacing: 0.2em; text-transform: uppercase;' +
         '  color: #5b9ecf; text-align: center;' +
-        '  height: '          + labelHeight + 'px;' +
-        '  line-height: '     + labelHeight + 'px;' +
+        '  height: '        + labelHeight + 'px;' +
+        '  line-height: '   + labelHeight + 'px;' +
         '  flex-shrink: 0;' +
         '}'
       : '') +
 
-    // Panel row
-    '.panels {' +
-    '  display: flex; flex: 1; gap: ' + pad + 'px; overflow: hidden;' +
-    '  height: ' + panelHeight + 'px;' +
+    // Active NWS alert banners — only rendered when active alerts exist.
+    '.alert-strip {' +
+    '  display: flex; flex-direction: column;' +
+    '  gap: ' + bannerGap + 'px; flex-shrink: 0;' +
     '}' +
-
-    // Left (today) panel
-    '.left {' +
-    '  width: '          + leftWidth + 'px; flex-shrink: 0;' +
-    '  background: #132338; border-radius: 6px;' +
-    '  display: flex; flex-direction: column; overflow: hidden;' +
-    '}' +
-    '.left-header {' +
-    '  background: #1a3a5c;' +
-    '  padding: '        + Math.floor(pad * 0.7) + 'px ' + pad + 'px;' +
-    '  border-bottom: 2px solid #2d5a8e; flex-shrink: 0;' +
-    '}' +
-    '.left-header .today-word {' +
-    '  font-size: '      + todayHeaderFont + 'px; font-weight: 700; color: #fff;' +
-    '}' +
-    '.left-header .today-date {' +
-    '  font-size: '      + todayDateFont + 'px; color: #7ab3d9; margin-top: 2px;' +
-    '}' +
-    '.left-body {' +
-    '  flex: 1; overflow: hidden;' +
-    '  padding: '        + Math.floor(pad * 0.5) + 'px;' +
-    '}' +
-
-    // All-day banners (shared by both panels)
-    '.allday-banner {' +
-    '  background: #1e4d7a; border-left: 3px solid #4a9eda; border-radius: 3px;' +
-    '  padding: '        + Math.floor(pad * 0.28) + 'px ' + Math.floor(pad * 0.5) + 'px;' +
-    '  margin-bottom: '  + Math.floor(pad * 0.3)  + 'px;' +
-    '  font-size: '      + bannerFont + 'px; color: #a8d1f0;' +
-    '  overflow: hidden;' + // Change to '  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;' if you don't want all day events text to wrap
-    '}' +
-
-    // Timed events in today panel
-    '.today-event {' +
-    '  display: flex; gap: ' + Math.floor(pad * 0.6) + 'px;' +
-    '  margin-bottom: '  + Math.floor(pad * 0.45) + 'px;' +
-    '  padding-bottom: ' + Math.floor(pad * 0.35) + 'px;' +
-    '  border-bottom: 1px solid #1a3050;' +
-    '}' +
-    '.today-event:last-child { border-bottom: none; margin-bottom: 0; }' +
-    '.today-time {' +
-    '  min-width: '      + Math.floor(leftWidth * 0.27) + 'px;' +
-    '  font-size: '      + todayTimeFont + 'px; font-weight: 700;' +
-    '  color: #4a9eda; line-height: 1.15; flex-shrink: 0;' +
-    '}' +
-    '.today-time .ampm {' +
-    '  font-size: '      + todayAmPmFont + 'px;' +
-    '}' +
-    '.today-info { flex: 1; overflow: hidden; }' +
-    '.today-title {' +
-    '  font-size: '      + todayTitleFont + 'px; font-weight: 600; color: #dde6f0;' +
-    '  line-height: 1.3;' +
+    '.alert-banner {' +
+    '  border-radius: 4px;' +
+    '  padding: '   + Math.floor(pad * 0.3) + 'px ' + pad + 'px;' +
+    '  font-size: ' + alertBannerFont + 'px; font-weight: 700;' +
     '  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;' +
     '}' +
-    '.today-loc {' +
-    '  font-size: '      + todayLocFont + 'px; color: #7ab3d9; margin-top: 2px;' +
-    '  overflow: hidden;' + // Change to '  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;' if you don't want today timed events text to wrap
+    '.alert-warning  { background:#5c1a1a; border-left:4px solid #c0392b; color:#f0a8a8; }' +
+    '.alert-watch    { background:#4a2a0a; border-left:4px solid #d68910; color:#f0d08a; }' +
+    '.alert-advisory { background:#3a3a1a; border-left:4px solid #b7950b; color:#e0d890; }' +
+
+    // ── PANELS GRID ──
+    // CSS grid: row 1 = auto (sizes to tallest header); row 2 = 1fr (fills remaining).
+    // column-gap spaces columns apart; row-gap:0 keeps each header flush against its body.
+    '.panels {' +
+    '  display: grid;' +
+    '  grid-template-columns: ' + colsTemplate + ';' +
+    '  grid-template-rows: auto 1fr;' +
+    '  column-gap: ' + Math.floor(pad * 0.55) + 'px;' +
+    '  row-gap: 0;' +
+    '  flex: 1; overflow: hidden; min-height: 0;' +
     '}' +
 
-    // Right panel (day columns)
-    '.right {' +
-    '  flex: 1; display: flex;' +
-    '  gap: '            + Math.floor(pad * 0.6) + 'px; overflow: hidden;' +
+    // ── TODAY HEADER (grid row 1, col 1) ──
+    // Rounded top corners; border-bottom separates from body below.
+    // No height set — grid row auto-sizes to the tallest header across all columns.
+    '.left-header {' +
+    '  background: #1a3a5c;' +
+    '  border-radius: 6px 6px 0 0;' +
+    '  padding: '        + Math.floor(pad * 0.38) + 'px ' + Math.floor(pad * 0.45) + 'px;' +
+    '  border-bottom: 2px solid #2d5a8e;' +
+    '  display: flex; flex-direction: column;' +
+    '  gap: '            + hdrGap + 'px;' +
     '}' +
-    '.day-col {' +
-    '  flex: 1; background: #0f1e2e; border-radius: 6px;' +
-    '  display: flex; flex-direction: column; overflow: hidden; min-width: 0;' +
-    '}' +
+
+    // ── DAY COLUMN HEADERS (grid row 1, cols 2+) ──
+    // Identical structure to today header; background differs.
     '.day-col-header {' +
-    '  background: #132338; flex-shrink: 0;' +
-    '  padding: '        + Math.floor(pad * 0.45) + 'px ' + Math.floor(pad * 0.4) + 'px;' +
+    '  background: #132338;' +
+    '  border-radius: 6px 6px 0 0;' +
+    '  padding: '        + Math.floor(pad * 0.38) + 'px ' + Math.floor(pad * 0.35) + 'px;' +
     '  border-bottom: 1px solid #1e3a5a;' +
-    '  font-size: '      + dayHeaderFont + 'px; font-weight: 700; color: #5b9ecf;' +
+    '  display: flex; flex-direction: column;' +
+    '  gap: '            + hdrGap + 'px;' +
     '}' +
-    '.day-col-body {' +
+
+    // Shared header date line.
+    '.hdr-date {' +
+    '  font-size: '  + colDateFont + 'px; font-weight: 700;' +
+    '  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;' +
+    '}' +
+    '.hdr-date .today-label  { color: #ffffff; }' +
+    '.hdr-date .today-sep    { color: #5b9ecf; }' +
+    '.hdr-date .today-short  { color: #5b9ecf; }' +
+    '.hdr-date .col-date-text { color: #5b9ecf; }' +
+
+    // Shared weather rows.
+    '.hdr-hl { font-size: ' + colWxFont + 'px; font-weight: 700; color: #dde6f0; }' +
+    '.hdr-hl .hi { color: #f0a060; }' +
+    '.hdr-hl .lo { color: #80c8f0; }' +
+    // Condition text wraps freely — no line-clamp. The CSS grid row auto-sizes
+    // to the tallest header content, so all headers expand uniformly to match
+    // the column with the longest forecast text.
+    '.hdr-cond {' +
+    '  font-size: '    + colWxFont + 'px; color: #a8d1f0;' +
+    '  line-height: 1.4;' +
+    '}' +
+    '.hdr-wind { font-size: ' + colWindFont + 'px; color: #7ab3d9; }' +
+
+    // Future alert badge rows.
+    // Fixed height = 2 text lines + padding + 2px borders. Using a fixed height
+    // (rather than free-wrap) keeps all badge rows the same height within each
+    // column regardless of individual text length, so badge rows stack evenly.
+    // display:flex + align-items:center vertically centers single-line text in
+    // the 2-line box; 2-line text fills it naturally.
+    '.future-alert-badge {' +
+    '  border-radius: 3px;' +
+    '  padding: '      + Math.floor(pad * 0.12) + 'px ' + Math.floor(pad * 0.35) + 'px;' +
+    '  font-size: '    + badgeFont + 'px; font-weight: 600;' +
+    '  height: '       + badgeRowH + 'px; overflow: hidden;' +
+    '  display: flex; align-items: center;' +
+    '  border: 1px solid transparent; line-height: 1.4;' +
+    '}' +
+    '.badge-warning   { background:#3a1a1a; border-color:#c0392b; color:#f0a8a8; }' +
+    '.badge-watch     { background:#2e2a1a; border-color:#d68910; color:#f0d08a; }' +
+    '.badge-advisory  { background:#3a3a1a; border-color:#b7950b; color:#e0d890; }' +
+    // Invisible spacer — same fixed height as a real badge, no visible content.
+    '.badge-placeholder {' +
+    '  background: transparent !important;' +
+    '  border-color: transparent !important;' +
+    '  color: transparent !important;' +
+    '  pointer-events: none;' +
+    '}' +
+
+    // ── TODAY BODY (grid row 2, col 1) ──
+    // Rounded bottom corners complete the visual column started by left-header.
+    // Horizontal flex: hourly weather strip (left) + events column (right).
+    '.left-body {' +
+    '  background: #132338;' +
+    '  border-radius: 0 0 6px 6px;' +
+    '  display: flex; flex-direction: row;' +
+    '  overflow: hidden; min-height: 0;' +
+    '}' +
+
+    // Hourly weather strip.
+    '.wx-strip {' +
+    '  width: '      + WEATHER_STRIP_WIDTH + 'px; flex-shrink: 0;' +
+    '  background: #0f1e2e; border-right: 1px solid #1e3a5a;' +
+    '  display: flex; flex-direction: column;' +
+    '  overflow: hidden;' +
+    '  padding: '    + Math.floor(pad * 0.3) + 'px 0;' +
+    '}' +
+    '.wx-slot {' +
+    '  display: flex; flex-direction: column; align-items: center;' +
+    '  padding: '    + Math.floor(pad * 0.28) + 'px 0 ' + Math.floor(pad * 0.22) + 'px;' +
+    '  flex-shrink: 0;' +
+    '}' +
+    '.wx-time {' +
+    '  font-size: '  + wxTimeFont + 'px; color: #4a9eda;' +
+    '  font-weight: 700; line-height: 1; margin-bottom: 3px;' +
+    '}' +
+    '.wx-time.now-label { color: #f0a060; letter-spacing: 0.05em; }' +
+    '.wx-temp {' +
+    '  font-size: '  + wxTempFont + 'px; font-weight: 700;' +
+    '  color: #dde6f0; line-height: 1; margin-bottom: 2px;' +
+    '}' +
+    // .wx-emoji is now a container for an inline SVG — no font-size needed.
+    // display:flex + align-items:center keeps the SVG centered in the slot.
+    '.wx-emoji { display:flex; align-items:center; justify-content:center; }' +
+    '.wx-divider {' +
+    '  width: '      + Math.floor(WEATHER_STRIP_WIDTH * 0.6) + 'px;' +
+    '  border-top: 1px solid #1e3a5a;' +
+    '  margin-top: ' + Math.floor(pad * 0.22) + 'px;' +
+    '}' +
+
+    // Today events column.
+    '.today-events {' +
     '  flex: 1; overflow: hidden;' +
-    '  padding: '        + Math.floor(pad * 0.35) + 'px;' +
+    '  padding: '    + Math.floor(pad * 0.45) + 'px ' + Math.floor(pad * 0.5) + 'px;' +
+    '  display: flex; flex-direction: column;' +
     '}' +
-    '.day-event { margin-bottom: ' + Math.floor(pad * 0.35) + 'px; }' +
+
+    // All-day shift color banners — shared by today and day column bodies.
+    '.allday-banner {' +
+    '  background: #1e4d7a; border-left: 3px solid #4a9eda; border-radius: 3px;' +
+    '  padding: '       + Math.floor(pad * 0.25) + 'px ' + Math.floor(pad * 0.45) + 'px;' +
+    '  margin-bottom: ' + Math.floor(pad * 0.28) + 'px;' +
+    '  font-size: '     + bannerFont + 'px; color: #a8d1f0;' +
+    '  overflow: hidden;' + // Change to 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;' to suppress wrapping
+    '}' +
+
+    // Stacked event: time label on its own line above title.
+    '.today-event {' +
+    '  margin-bottom: '  + Math.floor(pad * 0.42) + 'px;' +
+    '  padding-bottom: ' + Math.floor(pad * 0.32) + 'px;' +
+    '  border-bottom: 1px solid #1a3050; flex-shrink: 0;' +
+    '}' +
+    '.today-event:last-child { border-bottom: none; margin-bottom: 0; }' +
+    '.today-evt-time {' +
+    '  font-size: '  + evtTimeFont + 'px; font-weight: 700;' +
+    '  color: #4a9eda; line-height: 1.2;' +
+    '}' +
+    '.today-evt-title {' +
+    '  font-size: '  + evtTitleFont + 'px; font-weight: 600; color: #dde6f0;' +
+    '  line-height: 1.3;' +
+    '  overflow: hidden;' + // Change to 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;' to suppress wrapping
+    '}' +
+    '.today-evt-loc {' +
+    '  font-size: '  + evtLocFont + 'px; color: #7ab3d9; margin-top: 1px;' +
+    '  overflow: hidden;' + // Change to 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;' to suppress wrapping
+    '}' +
+
+    // ── DAY COLUMN BODIES (grid row 2, cols 2+) ──
+    // Rounded bottom corners complete the visual column started by day-col-header.
+    '.day-col-body {' +
+    '  background: #0f1e2e;' +
+    '  border-radius: 0 0 6px 6px;' +
+    '  overflow: hidden; min-height: 0;' +
+    '  padding: ' + Math.floor(pad * 0.32) + 'px;' +
+    '}' +
+    '.day-event { margin-bottom: ' + Math.floor(pad * 0.30) + 'px; }' +
     '.day-time {' +
-    '  font-size: '      + dayTimeFont + 'px; color: #4a9eda; font-weight: 600;' +
+    '  font-size: ' + dayTimeFont + 'px; color: #4a9eda; font-weight: 600;' +
     '}' +
     '.day-title {' +
-    '  font-size: '      + dayTitleFont + 'px; color: #c8dae8;' +
-    '  overflow: hidden;' + // Change to '  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;' if you don't want upcoming timed events text to wrap
+    '  font-size: ' + dayTitleFont + 'px; color: #c8dae8;' +
+    '  overflow: hidden;' + // Change to 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;' to suppress wrapping
     '}' +
     '.no-events {' +
-    '  font-size: '      + noEventsFont + 'px; color: #3d5a73; font-style: italic;' +
+    '  font-size: ' + noEventsFont + 'px; color: #3d5a73; font-style: italic;' +
     '}'
   );
 
-  // --- Build today's left panel content ---
-  const todayStr   = displayDates[0];
-  const todayEvts  = getEventsForDate(events, todayStr);
-  const todayAD    = todayEvts.filter(e =>  e.allDay);
-  const todayTimed = todayEvts.filter(e => !e.allDay).sort(sortByStart);
-
-  let todayContent = '';
-  for (const e of todayAD) {
-    todayContent +=
-      '<div class="allday-banner"' + getAllDayBannerStyle(e.summary) + '>' +
-        escapeHtml(e.summary || 'All Day') +
-      '</div>';
+  // --- Build active alert banners ---
+  let alertStripHtml = '';
+  if (activeAlerts.length > 0) {
+    alertStripHtml = '<div class="alert-strip">';
+    for (const alert of activeAlerts) {
+      const p   = alert.properties;
+      const cls = getAlertBannerClass(p);
+      const txt = (
+        '\u26A0 ' +
+        (p.event || 'Weather Alert') +
+        ' \u2014 ' +
+        // Use p.ends (actual weather event end) if available, falling back to
+      // p.expires (alert product expiry). NWS often sets expires to when they
+      // plan to issue the next update, which can be hours before the hazard ends.
+      formatExpiresLabel(p.ends || p.expires, todayStr)
+      );
+      alertStripHtml += (
+        '<div class="alert-banner ' + cls + '">' +
+          escapeHtml(txt) +
+        '</div>'
+      );
+    }
+    alertStripHtml += '</div>';
   }
 
+  // --- Helper: build badge rows HTML for one date ---
+  // Renders exactly maxBadgeCount elements: real badges where alerts exist,
+  // invisible .badge-placeholder elements to pad columns with fewer alerts.
+  // Returns empty string when maxBadgeCount === 0 (no future alerts anywhere).
+  function buildBadgeRowsHtml(dateStr) {
+    if (maxBadgeCount === 0) return '';
+    const badges = badgesPerDate[dateStr] || [];
+    let html = '';
+
+    for (const alert of badges) {
+      const p      = alert.properties;
+      const cls    = getAlertBadgeClass(p);
+      const timing = formatAlertTiming(p, dateStr);
+      const txt    = '\u26A0 ' + (p.event || 'Alert') + ' \u00B7 ' + timing;
+      html += (
+        '<div class="future-alert-badge ' + cls + '">' +
+          escapeHtml(txt) +
+        '</div>'
+      );
+    }
+
+    // Pad to maxBadgeCount with invisible placeholder rows.
+    const needed = maxBadgeCount - badges.length;
+    for (let i = 0; i < needed; i++) {
+      html += '<div class="future-alert-badge badge-placeholder">&nbsp;</div>';
+    }
+
+    return html;
+  }
+
+  // --- Helper: build weather rows HTML (H/L, condition, wind) ---
+  // Shared by both today header and day column headers.
+  function buildWeatherRowsHtml(wx) {
+    if (!wx) return '';
+    let html = '';
+
+    let hlInner = '';
+    if (wx.high !== null && wx.low !== null) {
+      hlInner = (
+        '<span class="hi">H: ' + escapeHtml(String(wx.high)) + '\u00B0</span>' +
+        '&ensp;' +
+        '<span class="lo">L: ' + escapeHtml(String(wx.low))  + '\u00B0</span>'
+      );
+    } else if (wx.high !== null) {
+      hlInner = '<span class="hi">H: ' + escapeHtml(String(wx.high)) + '\u00B0</span>';
+    } else if (wx.low !== null) {
+      hlInner = '<span class="lo">L: ' + escapeHtml(String(wx.low)) + '\u00B0</span>';
+    }
+    if (hlInner) html += '<div class="hdr-hl">' + hlInner + '</div>';
+
+    if (wx.shortForecast) {
+      // Inline SVG dot — color-coded by weather category — acts as a quick
+      // visual anchor before the condition text without requiring an emoji font.
+      const dotColor = getConditionColor(wx.shortForecast);
+      const dot = (
+        '<svg xmlns="http://www.w3.org/2000/svg"' +
+        ' width="8" height="8" viewBox="0 0 8 8"' +
+        ' style="display:inline-block;vertical-align:middle;' +
+        'margin-right:4px;flex-shrink:0;">' +
+        '<circle cx="4" cy="4" r="4" fill="' + dotColor + '"/>' +
+        '</svg>'
+      );
+      html += (
+        '<div class="hdr-cond">' +
+          dot +
+          escapeHtml(wx.shortForecast) +
+        '</div>'
+      );
+    }
+
+    if (wx.wind) {
+      html += '<div class="hdr-wind">' + escapeHtml(wx.wind.trim()) + '</div>';
+    }
+
+    return html;
+  }
+
+  // --- Build today header HTML ---
+  const todayShort    = formatDateShort(todayStr);
+  const todayDateHtml = (
+    '<div class="hdr-date">' +
+      '<span class="today-label">Today</span>' +
+      '<span class="today-sep"> &mdash; </span>' +
+      '<span class="today-short">' + escapeHtml(todayShort) + '</span>' +
+    '</div>'
+  );
+  const todayHeaderHtml = (
+    '<div class="left-header">' +
+      todayDateHtml +
+      buildWeatherRowsHtml(dailyWeatherMap[todayStr]) +
+      buildBadgeRowsHtml(todayStr) +
+    '</div>'
+  );
+
+  // --- Build day column headers HTML ---
+  // Collected separately so all headers can be emitted before any body,
+  // matching the CSS grid row order: row 1 = all headers, row 2 = all bodies.
+  let allColHeadersHtml = '';
+  for (const dateStr of displayDates.slice(1)) {
+    const colDateHtml = (
+      '<div class="hdr-date">' +
+        '<span class="col-date-text">' + escapeHtml(formatDateShort(dateStr)) + '</span>' +
+      '</div>'
+    );
+    allColHeadersHtml += (
+      '<div class="day-col-header">' +
+        colDateHtml +
+        buildWeatherRowsHtml(dailyWeatherMap[dateStr]) +
+        buildBadgeRowsHtml(dateStr) +
+      '</div>'
+    );
+  }
+
+  // --- Build today body HTML ---
+  // Hourly weather strip.
+  let wxStripHtml = '';
+  if (hourlySlots.length > 0) {
+    wxStripHtml = '<div class="wx-strip">';
+    for (let i = 0; i < hourlySlots.length; i++) {
+      const slot    = hourlySlots[i];
+      const timeCls = slot.isNow ? 'wx-time now-label' : 'wx-time';
+      const divider = (i < hourlySlots.length - 1) ? '<div class="wx-divider"></div>' : '';
+      wxStripHtml += (
+        '<div class="wx-slot">' +
+          '<span class="' + timeCls + '">' + escapeHtml(slot.label) + '</span>' +
+          '<span class="wx-temp">' + escapeHtml(String(slot.temp)) + '\u00B0</span>' +
+          '<span class="wx-emoji">' + slot.svg + '</span>' +
+          divider +
+        '</div>'
+      );
+    }
+    wxStripHtml += '</div>';
+  }
+
+  // Today calendar events.
+  const todayEvts  = getEventsForDate(events, todayStr);
+  const todayAD    = sortAllDayEvents(todayEvts.filter(function(e) { return e.allDay; }));
+  const todayTimed = todayEvts.filter(function(e) { return !e.allDay; }).sort(sortByStart);
+
+  let todayEventsHtml = '';
+  for (const e of todayAD) {
+    todayEventsHtml += (
+      '<div class="allday-banner"' + getAllDayBannerStyle(e.summary) + '>' +
+        escapeHtml(e.summary || 'All Day') +
+      '</div>'
+    );
+  }
   if (todayTimed.length === 0 && todayAD.length === 0) {
-    todayContent += '<div class="no-events">No events today</div>';
+    todayEventsHtml += '<div class="no-events">No events today</div>';
   } else {
     for (const e of todayTimed) {
-      // Split time string into number and AM/PM for size-differentiated display.
-      const timeStr  = formatTime(e.start);
-      const tMatch   = timeStr.match(/^(\d+:\d+)\s*([AP]M)$/i);
-      const timeNum  = tMatch ? tMatch[1] : timeStr;
-      const timeAmPm = tMatch ? tMatch[2] : '';
-
-      todayContent +=
+      todayEventsHtml += (
         '<div class="today-event">' +
-          '<div class="today-time">' +
-            escapeHtml(timeNum) +
-            (timeAmPm
-              ? '<span class="ampm"> ' + escapeHtml(timeAmPm) + '</span>'
-              : '') +
-          '</div>' +
-          '<div class="today-info">' +
-            '<div class="today-title">' +
-              escapeHtml(e.summary || '(No title)') +
-            '</div>' +
-            (e.location
-              ? '<div class="today-loc">' + escapeHtml(e.location) + '</div>'
-              : '') +
-          '</div>' +
-        '</div>';
+          '<div class="today-evt-time">' + escapeHtml(formatTime(e.start)) + '</div>' +
+          '<div class="today-evt-title">' + escapeHtml(e.summary || '(No title)') + '</div>' +
+          (e.location
+            ? '<div class="today-evt-loc">' + escapeHtml(e.location) + '</div>'
+            : '') +
+        '</div>'
+      );
     }
   }
 
-  // Format today's header label: "Today — Monday" / "March 18"
-  const todayLong    = formatDateLong(todayStr);
-  const commaIdx     = todayLong.indexOf(',');
-  const todayDayName = commaIdx !== -1
-    ? todayLong.substring(0, commaIdx)
-    : todayLong;
-  const todayDatePart = commaIdx !== -1
-    ? todayLong.substring(commaIdx + 1).trim()
-    : '';
+  const todayBodyHtml = (
+    '<div class="left-body">' +
+      wxStripHtml +
+      '<div class="today-events">' + todayEventsHtml + '</div>' +
+    '</div>'
+  );
 
-  // --- Build right panel day columns ---
-  let rightHtml = '';
+  // --- Build day column bodies HTML ---
+  let allColBodiesHtml = '';
   for (const dateStr of displayDates.slice(1)) {
     const dayEvts = getEventsForDate(events, dateStr);
-    const dayAD   = dayEvts.filter(e =>  e.allDay);
-    const dayTmd  = dayEvts.filter(e => !e.allDay).sort(sortByStart);
+    const dayAD   = sortAllDayEvents(dayEvts.filter(function(e) { return e.allDay; }));
+    const dayTmd  = dayEvts.filter(function(e) { return !e.allDay; }).sort(sortByStart);
 
     let colContent = '';
     for (const e of dayAD) {
-      colContent +=
+      colContent += (
         '<div class="allday-banner"' + getAllDayBannerStyle(e.summary) + '>' +
           escapeHtml(e.summary || 'All Day') +
-        '</div>';
+        '</div>'
+      );
     }
     if (dayTmd.length === 0 && dayAD.length === 0) {
       colContent += '<div class="no-events">No events</div>';
     } else {
       for (const e of dayTmd) {
-        colContent +=
+        colContent += (
           '<div class="day-event">' +
             '<div class="day-time">' + escapeHtml(formatTime(e.start)) + '</div>' +
             '<div class="day-title">' + escapeHtml(e.summary || '(No title)') + '</div>' +
-          '</div>';
+          '</div>'
+        );
       }
     }
 
-    rightHtml +=
-      '<div class="day-col">' +
-        '<div class="day-col-header">' + escapeHtml(formatDateShort(dateStr)) + '</div>' +
-        '<div class="day-col-body">'   + colContent + '</div>' +
-      '</div>';
+    allColBodiesHtml += '<div class="day-col-body">' + colContent + '</div>';
   }
 
   // --- Assemble full page ---
-  const body =
+  // Grid children order: all headers (row 1) then all bodies (row 2).
+  const body = (
     '<div class="outer">' +
-      (showLabel ? '<div class="cal-label">Station Calendar</div>' : '') +
+      (showLabel ? '<div class="cal-label">FFD Calendar</div>' : '') +
+      alertStripHtml +
       '<div class="panels">' +
-        '<div class="left">' +
-          '<div class="left-header">' +
-            '<div class="today-word">Today &mdash; ' +
-              escapeHtml(todayDayName) +
-            '</div>' +
-            '<div class="today-date">' + escapeHtml(todayDatePart) + '</div>' +
-          '</div>' +
-          '<div class="left-body">' + todayContent + '</div>' +
-        '</div>' +
-        '<div class="right">' + rightHtml + '</div>' +
+        todayHeaderHtml +
+        allColHeadersHtml +
+        todayBodyHtml +
+        allColBodiesHtml +
       '</div>' +
-    '</div>';
+    '</div>'
+  );
 
   return buildHtmlDoc(width, height, styles, body);
 }
-
-
-// =============================================================================
-// STRIP LAYOUT — split / tri
-// =============================================================================
-// Compact list of upcoming days displayed as rows. The date label sits in a
-// fixed-width left column, top-aligned, acting as a visual divider between
-// days. Events (all-day banners and timed entries) fill the right column.
-// This layout uses horizontal space for dates rather than vertical space,
-// allowing more days to fit without clipping.
-
 function buildStripLayout(events, displayDates, layout, layoutKey) {
   const { width, height } = layout;
 
@@ -1061,7 +2041,7 @@ function buildStripLayout(events, displayDates, layout, layoutKey) {
 
   for (const dateStr of displayDates) {
     const dayEvts = getEventsForDate(events, dateStr);
-    const dayAD   = dayEvts.filter(e =>  e.allDay);
+    const dayAD   = sortAllDayEvents(dayEvts.filter(e =>  e.allDay));
     const dayTmd  = dayEvts.filter(e => !e.allDay).sort(sortByStart);
 
     // Format date as two lines: "Mon" on top, "3/18" below, for compact display.
@@ -1101,6 +2081,7 @@ function buildStripLayout(events, displayDates, layout, layoutKey) {
 
   return buildHtmlDoc(width, height, styles, '<div class="strip">' + rowsHtml + '</div>');
 }
+
 
 // =============================================================================
 // EVENT HELPERS
