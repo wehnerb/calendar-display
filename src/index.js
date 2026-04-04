@@ -82,7 +82,7 @@ const CACHE_SECONDS = 900;
 // Increment this integer to immediately invalidate all cached pages.
 // Useful after configuration changes that affect the rendered output,
 // such as updating ALLDAY_COLORS, FILTER_EXACT, or DAYS_TO_SHOW.
-const CACHE_VERSION = 10;
+const CACHE_VERSION = 11;
 
 // Default layout when no ?layout= parameter is provided.
 // Options: 'full', 'wide', 'split', 'tri'
@@ -1128,6 +1128,13 @@ function buildHtmlDoc(width, height, styles, body) {
     '<meta http-equiv="refresh" content="' + CACHE_SECONDS + '">' +
     '<meta name="viewport" content="width=' + width + ', height=' + height + '">' +
     '<title>Station Calendar</title>' +
+    // Noto Emoji provides emoji glyphs on display hardware that lacks a system
+    // emoji font. Preconnect hints let the browser start DNS/TLS early.
+    // The font is used as a fallback after Arial in all font-family stacks,
+    // so it only activates for characters Arial cannot render (emoji).
+    '<link rel="preconnect" href="https://fonts.googleapis.com">' +
+    '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>' +
+    '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Emoji&display=swap">' +
     '<style>' + styles + '</style>' +
     '</head>' +
     '<body>' + body + '</body>' +
@@ -1298,7 +1305,7 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     'html, body {' +
     '  width: '  + width  + 'px; height: ' + height + 'px;' +
     '  overflow: hidden; background: #0d1b2a; color: #dde6f0;' +
-    '  font-family: Arial, Helvetica, sans-serif;' +
+    '  font-family: Arial, Helvetica, sans-serif, "Noto Emoji";' +
     '}' +
 
     // Outer flex column — label (optional), alert strip (optional), panels grid.
@@ -1765,7 +1772,7 @@ function buildStripLayout(events, displayDates, layout, layoutKey) {
     'html, body {' +
     '  width: '  + width  + 'px; height: ' + height + 'px;' +
     '  overflow: hidden; background: #0d1b2a; color: #dde6f0;' +
-    '  font-family: Arial, Helvetica, sans-serif;' +
+    '  font-family: Arial, Helvetica, sans-serif, "Noto Emoji";' +
     '}' +
     '.strip {' +
     '  width: '   + width  + 'px; height: ' + height + 'px;' +
@@ -1922,7 +1929,7 @@ function renderErrorPage(message, layout) {
     '  width: '    + width  + 'px; height: ' + height + 'px;' +
     '  margin: 0; padding: 0; overflow: hidden;' +
     '  background: #0d1b2a; color: #5b9ecf;' +
-    '  font-family: Arial, Helvetica, sans-serif;' +
+    '  font-family: Arial, Helvetica, sans-serif, "Noto Emoji";' +
     '  font-size: ' + fontSize + 'px;' +
     '  display: flex; align-items: center; justify-content: center;' +
     '  text-align: center;' +
