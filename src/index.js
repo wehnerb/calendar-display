@@ -82,7 +82,7 @@ const CACHE_SECONDS = 900;
 // Increment this integer to immediately invalidate all cached pages.
 // Useful after configuration changes that affect the rendered output,
 // such as updating ALLDAY_COLORS, FILTER_EXACT, or DAYS_TO_SHOW.
-const CACHE_VERSION = 9;
+const CACHE_VERSION = 1;
 
 // Default layout when no ?layout= parameter is provided.
 // Options: 'full', 'wide', 'split', 'tri'
@@ -1192,7 +1192,7 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
   const wxEmojiFont     = Math.floor(height * 0.024); // condition emoji
 
   // Shared.
-  const bannerFont      = Math.floor(height * 0.028); // all-day shift banners — matches main
+  const bannerFont      = Math.floor(height * 0.025); // all-day shift banners — matches main
   const alertBannerFont = Math.floor(height * 0.033); // active NWS alert banner text
   const noEventsFont    = Math.floor(height * 0.028); // "No events" — matches main
   const labelFont       = Math.floor(height * 0.040); // "FFD Calendar" title (full only)
