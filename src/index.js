@@ -1172,21 +1172,21 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
   // Header fonts — identical values used in BOTH the today header and day column
   // headers. CSS grid row 1 sizes to the tallest header automatically so all
   // headers are always the same height without any JS height estimation.
-  const colDateFont     = Math.floor(height * 0.028); // date line — matches main dayHeaderFont
-  const colWxFont       = Math.floor(height * 0.018); // weather rows (H/L, condition, wind)
-  const colWindFont     = Math.floor(colWxFont * 0.94);
-  const badgeFont       = Math.floor(height * 0.016); // future alert badge text
+  const colDateFont     = Math.floor(height * 0.035); // date line — matches main dayHeaderFont
+  const colWxFont       = Math.floor(height * 0.030); // weather rows (H/L, condition, wind)
+  const colWindFont     = Math.floor(colWxFont * 0.96);
+  const badgeFont       = Math.floor(height * 0.03); // future alert badge text
 
   // Body fonts — today panel events.
   // evtTimeFont: stacked layout (time above title) rather than main's side-by-side,
   // so 0.026 is a good target — larger than before while fitting the stacked format.
-  const evtTimeFont     = Math.floor(height * 0.026); // stacked event time label
-  const evtTitleFont    = Math.floor(height * 0.030); // event title — matches main todayTitleFont
-  const evtLocFont      = Math.floor(height * 0.022); // event location — matches main todayLocFont
+  const evtTimeFont     = Math.floor(height * 0.030); // stacked event time label
+  const evtTitleFont    = Math.floor(height * 0.033); // event title — matches main todayTitleFont
+  const evtLocFont      = Math.floor(height * 0.028); // event location — matches main todayLocFont
 
   // Body fonts — day column events.
-  const dayTimeFont     = Math.floor(height * 0.022); // matches main dayTimeFont
-  const dayTitleFont    = Math.floor(height * 0.023); // matches main dayTitleFont
+  const dayTimeFont     = Math.floor(height * 0.028); // matches main dayTimeFont
+  const dayTitleFont    = Math.floor(height * 0.029); // matches main dayTitleFont
 
   // Hourly strip fonts.
   const wxTimeFont      = Math.floor(height * 0.016); // hour label ("NOW", "2 PM")
