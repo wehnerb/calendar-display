@@ -82,7 +82,7 @@ const CACHE_SECONDS = 900;
 // Increment this integer to immediately invalidate all cached pages.
 // Useful after configuration changes that affect the rendered output,
 // such as updating ALLDAY_COLORS, FILTER_EXACT, or DAYS_TO_SHOW.
-const CACHE_VERSION = 4;
+const CACHE_VERSION = 5;
 
 // Default layout when no ?layout= parameter is provided.
 // Options: 'full', 'wide', 'split', 'tri'
@@ -1162,19 +1162,21 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
   // Header fonts — identical values used in BOTH the today header and day column
   // headers. CSS grid row 1 sizes to the tallest header automatically so all
   // headers are always the same height without any JS height estimation.
-  const colDateFont     = Math.floor(height * 0.023); // date line
+  const colDateFont     = Math.floor(height * 0.028); // date line — matches main dayHeaderFont
   const colWxFont       = Math.floor(height * 0.018); // weather rows (H/L, condition, wind)
   const colWindFont     = Math.floor(colWxFont * 0.94);
   const badgeFont       = Math.floor(height * 0.016); // future alert badge text
 
   // Body fonts — today panel events.
-  const evtTimeFont     = Math.floor(height * 0.019); // stacked event time label
-  const evtTitleFont    = Math.floor(height * 0.025); // event title
-  const evtLocFont      = Math.floor(height * 0.018); // event location line
+  // evtTimeFont: stacked layout (time above title) rather than main's side-by-side,
+  // so 0.026 is a good target — larger than before while fitting the stacked format.
+  const evtTimeFont     = Math.floor(height * 0.026); // stacked event time label
+  const evtTitleFont    = Math.floor(height * 0.030); // event title — matches main todayTitleFont
+  const evtLocFont      = Math.floor(height * 0.022); // event location — matches main todayLocFont
 
   // Body fonts — day column events.
-  const dayTimeFont     = Math.floor(height * 0.020);
-  const dayTitleFont    = Math.floor(height * 0.021);
+  const dayTimeFont     = Math.floor(height * 0.022); // matches main dayTimeFont
+  const dayTitleFont    = Math.floor(height * 0.023); // matches main dayTitleFont
 
   // Hourly strip fonts.
   const wxTimeFont      = Math.floor(height * 0.016); // hour label ("NOW", "2 PM")
@@ -1182,9 +1184,9 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
   const wxEmojiFont     = Math.floor(height * 0.024); // condition emoji
 
   // Shared.
-  const bannerFont      = Math.floor(height * 0.021); // all-day shift color banners
+  const bannerFont      = Math.floor(height * 0.022); // all-day shift banners — matches main
   const alertBannerFont = Math.floor(height * 0.019); // active NWS alert banner text
-  const noEventsFont    = Math.floor(height * 0.021); // "No events" italic label
+  const noEventsFont    = Math.floor(height * 0.024); // "No events" — matches main
   const labelFont       = Math.floor(height * 0.030); // "FFD Calendar" title (full only)
 
   // hdrGap: gap between flex rows inside each header (date, H/L, condition, wind, badges).
