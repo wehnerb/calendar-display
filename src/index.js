@@ -1174,8 +1174,8 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
   // headers are always the same height without any JS height estimation.
   const colDateFont     = Math.floor(height * 0.035); // date line — matches main dayHeaderFont
   const colWxFont       = Math.floor(height * 0.025); // weather rows (H/L, condition, wind)
-  const colWindFont     = Math.floor(colWxFont * 0.95);
-  const badgeFont       = Math.floor(height * 0.03); // future alert badge text
+  const colWindFont     = Math.floor(colWxFont * 0.95); // wind information in all columns
+  const badgeFont       = Math.floor(height * 0.03); // future weather alert badge text
 
   // Body fonts — today panel events.
   const evtTimeFont     = Math.floor(height * 0.030); // stacked event time label
@@ -1183,22 +1183,22 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
   const evtLocFont      = Math.floor(height * 0.025); // event location — matches main todayLocFont
 
   // Body fonts — day column events.
-  const dayTimeFont     = Math.floor(height * 0.025); // matches main dayTimeFont
-  const dayTitleFont    = Math.floor(height * 0.026); // matches main dayTitleFont
+  const dayTimeFont     = Math.floor(height * 0.025); // time label
+  const dayTitleFont    = Math.floor(height * 0.026); // event title
 
-  // Hourly strip fonts.
+  // Hourly weather strip fonts.
   const wxTimeFont      = Math.floor(height * 0.020); // hour label ("NOW", "2 PM")
   const wxTempFont      = Math.floor(height * 0.024); // temperature
   const wxEmojiFont     = Math.floor(height * 0.024); // condition emoji
 
   // Shared.
-  const bannerFont      = Math.floor(height * 0.025); // all-day shift banners — matches main
-  const alertBannerFont = Math.floor(height * 0.033); // active NWS alert banner text
+  const bannerFont      = Math.floor(height * 0.025); // all-day shift banners
+  const alertBannerFont = Math.floor(height * 0.033); // active weather alert banner text
   const noEventsFont    = Math.floor(height * 0.028); // "No events" — matches main
   const labelFont       = Math.floor(height * 0.040); // "FFD Calendar" title (full only)
 
   // hdrGap: gap between flex rows inside each header (date, H/L, condition, wind, badges).
-  const hdrGap = Math.floor(pad * 0.15);
+  const hdrGap = Math.floor(pad * 0.16);
 
   // --- Process NWS data ---
   const dailyWeatherMap = buildDailyWeatherMap(dailyPeriods);
