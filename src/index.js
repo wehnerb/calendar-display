@@ -1145,8 +1145,8 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
   const now      = new Date();
   const todayStr = displayDates[0];
 
-  // Full layout shows a "Station Calendar" title label; other layouts have
-  // their own title bar from the display system.
+  // Full layout shows an "FFD Calendar" title label; other layouts have their
+  // own title bar from the display system.
   const showLabel = (layoutKey === 'full');
 
   // --- Sizing — all proportional to layout height so wide and full both look correct ---
@@ -1159,9 +1159,10 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
   const leftWidth     = Math.floor(width * leftRatio);
 
   // ── Font sizes ──
-  // Header fonts — identical values used in BOTH the today panel header and
-  // day column headers so both panels render at the same total header height.
-  const colDateFont     = Math.floor(height * 0.023); // date line ("Today — Mon 4/1" / "Mon 4/1")
+  // Header fonts — identical values used in BOTH the today header and day column
+  // headers. CSS grid row 1 sizes to the tallest header automatically so all
+  // headers are always the same height without any JS height estimation.
+  const colDateFont     = Math.floor(height * 0.023); // date line
   const colWxFont       = Math.floor(height * 0.018); // weather rows (H/L, condition, wind)
   const colWindFont     = Math.floor(colWxFont * 0.94);
   const badgeFont       = Math.floor(height * 0.016); // future alert badge text
@@ -1184,7 +1185,10 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
   const bannerFont      = Math.floor(height * 0.021); // all-day shift color banners
   const alertBannerFont = Math.floor(height * 0.019); // active NWS alert banner text
   const noEventsFont    = Math.floor(height * 0.021); // "No events" italic label
-  const labelFont       = Math.floor(height * 0.030); // "Station Calendar" title (full only)
+  const labelFont       = Math.floor(height * 0.030); // "FFD Calendar" title (full only)
+
+  // hdrGap: gap between flex rows inside each header (date, H/L, condition, wind, badges).
+  const hdrGap = Math.floor(pad * 0.15);
 
   // --- Process NWS data ---
   const dailyWeatherMap = buildDailyWeatherMap(dailyPeriods);
@@ -1192,7 +1196,9 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
 
   // Per-date future alert badge lists and the overall maximum count.
   // Every column header renders exactly maxBadgeCount badge-row elements
-  // (real badges + invisible placeholders) so all headers are the same height.
+  // (real badges + invisible placeholders) so all headers have the same
+  // number of badge rows. The CSS grid ensures all headers are the same
+  // total height by stretching to match the tallest column.
   const badgesPerDate = {};
   for (const dateStr of displayDates) {
     const raw = getBadgeAlertsForDate(alertFeatures, dateStr, todayStr, now);
@@ -1202,77 +1208,81 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     return Math.max(max, badgesPerDate[d].length);
   }, 0);
 
-  // --- Compute max hourly strip slots ---
-  // We calculate the rendered pixel height of the today header and any active
-  // alert strip, then derive how much vertical space remains for the panel body.
-  // The number of slots is capped so the last slot is never clipped by overflow.
-  //
-  // Header height is calculated from the same padding/gap/font values used in CSS,
-  // matching both the today header and day column header (identical structure).
-  const hdrPad      = Math.floor(pad * 0.38) * 2;          // top + bottom padding
-  const hdrGap      = Math.floor(pad * 0.15);               // gap between flex rows
-  // All header content rows use an explicit line-height of 1.4 (set in CSS below).
-  // JS estimates use Math.ceil(fontSize * 1.4) per line to exactly match the
-  // browser's rendered line heights, making the fixed CSS header height precise.
-  const lh = 1.4;
-  // 4 rows: date (1 line), H/L (1 line), condition (2 lines max), wind (1 line).
-  // Condition is capped at exactly 2 lines by -webkit-line-clamp in CSS, so this
-  // estimate is always correct regardless of column width or forecast text length.
-  // 3 gaps between the 4 rows.
-  const hdrContent = Math.ceil(colDateFont * lh)
-                   + Math.ceil(colWxFont   * lh)
-                   + Math.ceil(colWxFont   * lh) * 2  // condition: clamped to 2 lines
-                   + Math.ceil(colWindFont * lh)
-                   + (hdrGap * 3);
-  // Each badge row is a fixed 2-text-line height + vertical padding + 2px for borders.
+  // Each badge element is a fixed 2-text-line height + vertical padding + 2px borders.
   // The +2 accounts for the 1px top + 1px bottom border on .future-alert-badge which are
-  // subtracted from the content area by box-sizing:border-box. Without this the second
-  // text line clips at the bottom edge of the badge box.
+  // subtracted from the content area by box-sizing:border-box.
   // This same value is the CSS height on .future-alert-badge so real badges and
-  // placeholders are always identical height regardless of text content.
+  // placeholders are always the same height regardless of text content.
+  const lh        = 1.4;
   const badgeRowH = Math.ceil(badgeFont * lh) * 2 + Math.floor(pad * 0.12) * 2 + 2;
-  const badgesBlock = maxBadgeCount > 0
+
+  // --- Compute max hourly strip slots ---
+  // The actual header height is determined by the CSS grid at browser render time
+  // (it sizes to the tallest content across all columns), so the Worker cannot know
+  // it precisely. We use a conservative worst-case estimate to ensure no hourly slot
+  // is ever clipped by overflow. On calm-weather days the strip may show 1-2 fewer
+  // slots than theoretically possible, but this is visually insignificant.
+  //
+  // Worst-case header height assumes:
+  //   - condition wraps to 3 lines (longest possible NWS forecast text)
+  //   - actual maxBadgeCount badge rows (we know this exactly)
+  const hdrPad  = Math.floor(pad * 0.38) * 2; // top + bottom padding on headers
+  const worstCondLines  = 3;
+  const worstHdrContent = Math.ceil(colDateFont * lh)
+                        + Math.ceil(colWxFont   * lh)
+                        + Math.ceil(colWxFont   * lh) * worstCondLines
+                        + Math.ceil(colWindFont * lh)
+                        + (hdrGap * 3);
+  const badgesBlock     = maxBadgeCount > 0
     ? hdrGap + (maxBadgeCount * badgeRowH) + ((maxBadgeCount - 1) * hdrGap)
     : 0;
-  const hdrHeight   = hdrPad + hdrContent + badgesBlock;
+  const worstHdrHeight  = hdrPad + worstHdrContent + badgesBlock;
 
   // Alert strip height: each banner is its font + vertical padding; gaps between banners.
-  const bannerRowH   = alertBannerFont + Math.floor(pad * 0.3) * 2;
-  const bannerGap    = Math.floor(pad * 0.25);
-  const alertStripH  = activeAlerts.length > 0
+  const bannerRowH  = alertBannerFont + Math.floor(pad * 0.3) * 2;
+  const bannerGap   = Math.floor(pad * 0.25);
+  const alertStripH = activeAlerts.length > 0
     ? (activeAlerts.length * bannerRowH) + ((activeAlerts.length - 1) * bannerGap)
     : 0;
 
-  // Outer gap between flex children (label, alert strip, panels row).
+  // Outer gap between flex children (label, alert strip, panels grid).
   const outerGap = Math.floor(pad * 0.5);
 
-  // Available height for the panels row.
+  // Available height for the panels grid.
   let panelsH = height - (pad * 2);
-  if (showLabel)             panelsH -= labelHeight + outerGap;
-  if (alertStripH > 0)       panelsH -= alertStripH + outerGap;
+  if (showLabel)         panelsH -= labelHeight + outerGap;
+  if (alertStripH > 0)   panelsH -= alertStripH + outerGap;
 
-  // Hourly strip: available body height = panelsH minus header minus strip padding.
-  const stripPadV  = Math.floor(pad * 0.3) * 2;
-  const bodyH      = panelsH - hdrHeight;
+  // Available body height = panels height minus worst-case header.
+  const stripPadV = Math.floor(pad * 0.3) * 2;
+  const bodyH     = panelsH - worstHdrHeight;
 
   // Per-slot height: vertical padding + time label + margin + temp + margin + emoji + divider.
-  const slotPadV   = Math.floor(pad * 0.28) + Math.floor(pad * 0.22);
-  const slotH      = slotPadV
-                   + wxTimeFont + 3
-                   + wxTempFont + 2
-                   + wxEmojiFont
-                   + Math.floor(pad * 0.22) + 1;
+  const slotPadV = Math.floor(pad * 0.28) + Math.floor(pad * 0.22);
+  const slotH    = slotPadV
+                 + wxTimeFont + 3
+                 + wxTempFont + 2
+                 + wxEmojiFont
+                 + Math.floor(pad * 0.22) + 1;
 
-  // Leave a small safety margin (0.85) so the last slot never grazes the boundary.
-  const maxSlots   = Math.max(1, Math.floor((bodyH - stripPadV) * 0.85 / slotH));
+  // Safety margin (0.85) ensures the last slot never grazes the body boundary.
+  const maxSlots = Math.max(1, Math.floor((bodyH - stripPadV) * 0.85 / slotH));
 
   // Build hourly slots now that maxSlots is known.
   const hourlySlots = buildHourlyStripSlots(hourlyPeriods, todayStr, now, maxSlots);
 
   // --- CSS ---
-  // Header CSS is shared between .left-header and .day-col-header via common
-  // class selectors for weather rows and badges. This ensures both panels use
-  // identical styling and render at the same total header height.
+  // Layout approach: .panels is a CSS grid with (1 + rightDayCount) columns and
+  // 2 rows. Row 1 (auto height) holds all headers; row 2 (1fr) holds all bodies.
+  // The grid automatically sizes row 1 to the tallest header across all columns,
+  // so all headers are always the same height without any JS measurement.
+  // DOM order: today-header, all day-col-headers, today-body, all day-col-bodies.
+  //
+  // Visual structure per column:
+  //   today: bright-blue header (border-radius top) + dark-blue body (border-radius bottom)
+  //   days:  mid-blue header (border-radius top) + dark body (border-radius bottom)
+  const colsTemplate = leftWidth + 'px repeat(' + rightDayCount + ', 1fr)';
+
   const styles = (
     '*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }' +
     'html, body {' +
@@ -1281,117 +1291,117 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     '  font-family: Arial, Helvetica, sans-serif;' +
     '}' +
 
-    // Outer flex column — contains optional label, optional alert strip, panels row.
+    // Outer flex column — label (optional), alert strip (optional), panels grid.
     '.outer {' +
     '  width: '  + width  + 'px; height: ' + height + 'px;' +
-    '  padding: ' + pad   + 'px;' +
+    '  padding: ' + pad + 'px;' +
     '  display: flex; flex-direction: column;' +
     '  gap: '     + outerGap + 'px;' +
     '}' +
 
-    // "Station Calendar" title (full layout only).
+    // "FFD Calendar" title — full layout only.
     (showLabel
       ? '.cal-label {' +
-        '  font-size: '       + labelFont + 'px; font-weight: 700;' +
+        '  font-size: '     + labelFont + 'px; font-weight: 700;' +
         '  letter-spacing: 0.2em; text-transform: uppercase;' +
         '  color: #5b9ecf; text-align: center;' +
-        '  height: '          + labelHeight + 'px;' +
-        '  line-height: '     + labelHeight + 'px;' +
+        '  height: '        + labelHeight + 'px;' +
+        '  line-height: '   + labelHeight + 'px;' +
         '  flex-shrink: 0;' +
         '}'
       : '') +
 
-    // Active NWS alert banners — only rendered when alerts exist.
+    // Active NWS alert banners — only rendered when active alerts exist.
     '.alert-strip {' +
     '  display: flex; flex-direction: column;' +
-    '  gap: '        + bannerGap + 'px; flex-shrink: 0;' +
+    '  gap: ' + bannerGap + 'px; flex-shrink: 0;' +
     '}' +
     '.alert-banner {' +
     '  border-radius: 4px;' +
-    '  padding: '    + Math.floor(pad * 0.3) + 'px ' + pad + 'px;' +
-    '  font-size: '  + alertBannerFont + 'px; font-weight: 700;' +
+    '  padding: '   + Math.floor(pad * 0.3) + 'px ' + pad + 'px;' +
+    '  font-size: ' + alertBannerFont + 'px; font-weight: 700;' +
     '  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;' +
     '}' +
     '.alert-warning  { background:#5c1a1a; border-left:4px solid #c0392b; color:#f0a8a8; }' +
     '.alert-watch    { background:#4a2a0a; border-left:4px solid #d68910; color:#f0d08a; }' +
     '.alert-advisory { background:#3a3a1a; border-left:4px solid #b7950b; color:#e0d890; }' +
 
-    // Panel row — flex:1 takes remaining height after label and alert strip.
+    // ── PANELS GRID ──
+    // CSS grid: row 1 = auto (sizes to tallest header); row 2 = 1fr (fills remaining).
+    // column-gap spaces columns apart; row-gap:0 keeps each header flush against its body.
     '.panels {' +
-    '  display: flex; flex: 1;' +
-    '  gap: '     + pad + 'px;' +
-    '  overflow: hidden; min-height: 0;' +
+    '  display: grid;' +
+    '  grid-template-columns: ' + colsTemplate + ';' +
+    '  grid-template-rows: auto 1fr;' +
+    '  column-gap: ' + Math.floor(pad * 0.55) + 'px;' +
+    '  row-gap: 0;' +
+    '  flex: 1; overflow: hidden; min-height: 0;' +
     '}' +
 
-    // ── LEFT (TODAY) PANEL ──
-    '.left {' +
-    '  width: '         + leftWidth + 'px; flex-shrink: 0;' +
-    '  background: #132338; border-radius: 6px;' +
-    '  display: flex; flex-direction: column; overflow: hidden;' +
-    '}' +
-
-    // Today header — fixed height forces it to match day column headers exactly.
-    // The same hdrHeight value is applied to .day-col-header below.
-    // overflow:hidden clips any content that would exceed the allocated space.
+    // ── TODAY HEADER (grid row 1, col 1) ──
+    // Rounded top corners; border-bottom separates from body below.
+    // No height set — grid row auto-sizes to the tallest header across all columns.
     '.left-header {' +
     '  background: #1a3a5c;' +
-    '  padding: '       + Math.floor(pad * 0.38) + 'px ' + Math.floor(pad * 0.45) + 'px;' +
-    '  border-bottom: 2px solid #2d5a8e; flex-shrink: 0;' +
-    '  height: '        + hdrHeight + 'px; overflow: hidden;' +
+    '  border-radius: 6px 6px 0 0;' +
+    '  padding: '        + Math.floor(pad * 0.38) + 'px ' + Math.floor(pad * 0.45) + 'px;' +
+    '  border-bottom: 2px solid #2d5a8e;' +
     '  display: flex; flex-direction: column;' +
-    '  gap: '           + hdrGap + 'px;' +
+    '  gap: '            + hdrGap + 'px;' +
     '}' +
 
-    // Shared header date line — used in both today header and day column headers.
-    // In today's header this reads "Today — Mon 4/1"; in columns it reads "Mon 4/1".
+    // ── DAY COLUMN HEADERS (grid row 1, cols 2+) ──
+    // Identical structure to today header; background differs.
+    '.day-col-header {' +
+    '  background: #132338;' +
+    '  border-radius: 6px 6px 0 0;' +
+    '  padding: '        + Math.floor(pad * 0.38) + 'px ' + Math.floor(pad * 0.35) + 'px;' +
+    '  border-bottom: 1px solid #1e3a5a;' +
+    '  display: flex; flex-direction: column;' +
+    '  gap: '            + hdrGap + 'px;' +
+    '}' +
+
+    // Shared header date line.
     '.hdr-date {' +
-    '  font-size: '     + colDateFont + 'px; font-weight: 700;' +
+    '  font-size: '  + colDateFont + 'px; font-weight: 700;' +
     '  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;' +
     '}' +
-    '.hdr-date .today-label { color: #ffffff; }' +
-    '.hdr-date .today-sep   { color: #5b9ecf; }' +
-    '.hdr-date .today-short { color: #5b9ecf; }' +
+    '.hdr-date .today-label  { color: #ffffff; }' +
+    '.hdr-date .today-sep    { color: #5b9ecf; }' +
+    '.hdr-date .today-short  { color: #5b9ecf; }' +
     '.hdr-date .col-date-text { color: #5b9ecf; }' +
 
-    // Shared weather rows — same font, same colors in both today and day columns.
-    '.hdr-hl {' +
-    '  font-size: '     + colWxFont + 'px; font-weight: 700; color: #dde6f0;' +
-    '}' +
+    // Shared weather rows.
+    '.hdr-hl { font-size: ' + colWxFont + 'px; font-weight: 700; color: #dde6f0; }' +
     '.hdr-hl .hi { color: #f0a060; }' +
     '.hdr-hl .lo { color: #80c8f0; }' +
+    // Condition text wraps freely — no line-clamp. The CSS grid row auto-sizes
+    // to the tallest header content, so all headers expand uniformly to match
+    // the column with the longest forecast text.
     '.hdr-cond {' +
-    '  font-size: '     + colWxFont + 'px; color: #a8d1f0;' +
-    // line-height:1.4 matches the JS hdrContent estimate (Math.ceil(colWxFont * 1.4) * 2).
-    // -webkit-line-clamp:2 enforces exactly 2 rendered lines in all cases, showing an
-    // ellipsis for overflow. This makes the condition row height deterministic regardless
-    // of column width or text length, so hdrHeight is always exact.
-    '  line-height: 1.4; display: -webkit-box; -webkit-box-orient: vertical;' +
-    '  -webkit-line-clamp: 2; overflow: hidden;' +
+    '  font-size: '    + colWxFont + 'px; color: #a8d1f0;' +
+    '  line-height: 1.4;' +
     '}' +
-    '.hdr-wind {' +
-    '  font-size: '     + colWindFont + 'px; color: #7ab3d9;' +
-    '}' +
+    '.hdr-wind { font-size: ' + colWindFont + 'px; color: #7ab3d9; }' +
 
-    // Future alert badge rows — shared by today header and day column headers.
-    // maxBadgeCount badge elements are always rendered in every header:
-    // real badges where alerts exist, .badge-placeholder elements elsewhere.
-    // Fixed height = 2 text lines + vertical padding + 2px borders (box-sizing:border-box
-    // subtracts borders from content area). overflow:hidden clips any excess text cleanly.
-    // display:flex + align-items:center vertically centers text within the fixed height:
-    // single-line alerts sit centered in the 2-line box; 2-line alerts fill it naturally.
-    // Placeholders inherit the same height so they are always identical to real badges.
+    // Future alert badge rows.
+    // Fixed height = 2 text lines + padding + 2px borders. Using a fixed height
+    // (rather than free-wrap) keeps all badge rows the same height within each
+    // column regardless of individual text length, so badge rows stack evenly.
+    // display:flex + align-items:center vertically centers single-line text in
+    // the 2-line box; 2-line text fills it naturally.
     '.future-alert-badge {' +
     '  border-radius: 3px;' +
-    '  padding: '       + Math.floor(pad * 0.12) + 'px ' + Math.floor(pad * 0.35) + 'px;' +
-    '  font-size: '     + badgeFont + 'px; font-weight: 600;' +
-    '  height: '        + badgeRowH + 'px; overflow: hidden;' +
+    '  padding: '      + Math.floor(pad * 0.12) + 'px ' + Math.floor(pad * 0.35) + 'px;' +
+    '  font-size: '    + badgeFont + 'px; font-weight: 600;' +
+    '  height: '       + badgeRowH + 'px; overflow: hidden;' +
     '  display: flex; align-items: center;' +
     '  border: 1px solid transparent; line-height: 1.4;' +
     '}' +
     '.badge-warning   { background:#3a1a1a; border-color:#c0392b; color:#f0a8a8; }' +
     '.badge-watch     { background:#2e2a1a; border-color:#d68910; color:#f0d08a; }' +
     '.badge-advisory  { background:#3a3a1a; border-color:#b7950b; color:#e0d890; }' +
-    // Invisible spacer — same rendered height as a real badge, no visible content.
+    // Invisible spacer — same fixed height as a real badge, no visible content.
     '.badge-placeholder {' +
     '  background: transparent !important;' +
     '  border-color: transparent !important;' +
@@ -1399,60 +1409,62 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     '  pointer-events: none;' +
     '}' +
 
-    // Today body — horizontal flex: weather strip (left) + events column (right).
+    // ── TODAY BODY (grid row 2, col 1) ──
+    // Rounded bottom corners complete the visual column started by left-header.
+    // Horizontal flex: hourly weather strip (left) + events column (right).
     '.left-body {' +
-    '  flex: 1; display: flex; flex-direction: row;' +
+    '  background: #132338;' +
+    '  border-radius: 0 0 6px 6px;' +
+    '  display: flex; flex-direction: row;' +
     '  overflow: hidden; min-height: 0;' +
     '}' +
 
-    // Hourly weather strip — slightly darker background, right border as divider.
+    // Hourly weather strip.
     '.wx-strip {' +
-    '  width: '         + WEATHER_STRIP_WIDTH + 'px; flex-shrink: 0;' +
+    '  width: '      + WEATHER_STRIP_WIDTH + 'px; flex-shrink: 0;' +
     '  background: #0f1e2e; border-right: 1px solid #1e3a5a;' +
     '  display: flex; flex-direction: column;' +
     '  overflow: hidden;' +
-    '  padding: '       + Math.floor(pad * 0.3) + 'px 0;' +
+    '  padding: '    + Math.floor(pad * 0.3) + 'px 0;' +
     '}' +
     '.wx-slot {' +
     '  display: flex; flex-direction: column; align-items: center;' +
-    '  padding: '       + Math.floor(pad * 0.28) + 'px 0 ' + Math.floor(pad * 0.22) + 'px;' +
+    '  padding: '    + Math.floor(pad * 0.28) + 'px 0 ' + Math.floor(pad * 0.22) + 'px;' +
     '  flex-shrink: 0;' +
     '}' +
     '.wx-time {' +
-    '  font-size: '     + wxTimeFont + 'px; color: #4a9eda;' +
+    '  font-size: '  + wxTimeFont + 'px; color: #4a9eda;' +
     '  font-weight: 700; line-height: 1; margin-bottom: 3px;' +
     '}' +
     '.wx-time.now-label { color: #f0a060; letter-spacing: 0.05em; }' +
     '.wx-temp {' +
-    '  font-size: '     + wxTempFont + 'px; font-weight: 700;' +
+    '  font-size: '  + wxTempFont + 'px; font-weight: 700;' +
     '  color: #dde6f0; line-height: 1; margin-bottom: 2px;' +
     '}' +
     '.wx-emoji { font-size: ' + wxEmojiFont + 'px; line-height: 1; }' +
     '.wx-divider {' +
-    '  width: '         + Math.floor(WEATHER_STRIP_WIDTH * 0.6) + 'px;' +
+    '  width: '      + Math.floor(WEATHER_STRIP_WIDTH * 0.6) + 'px;' +
     '  border-top: 1px solid #1e3a5a;' +
-    '  margin-top: '   + Math.floor(pad * 0.22) + 'px;' +
+    '  margin-top: ' + Math.floor(pad * 0.22) + 'px;' +
     '}' +
 
     // Today events column.
     '.today-events {' +
     '  flex: 1; overflow: hidden;' +
-    '  padding: '       + Math.floor(pad * 0.45) + 'px ' + Math.floor(pad * 0.5) + 'px;' +
+    '  padding: '    + Math.floor(pad * 0.45) + 'px ' + Math.floor(pad * 0.5) + 'px;' +
     '  display: flex; flex-direction: column;' +
     '}' +
 
-    // All-day shift color banners — shared by today events and day column bodies.
+    // All-day shift color banners — shared by today and day column bodies.
     '.allday-banner {' +
     '  background: #1e4d7a; border-left: 3px solid #4a9eda; border-radius: 3px;' +
-    '  padding: '        + Math.floor(pad * 0.25) + 'px ' + Math.floor(pad * 0.45) + 'px;' +
-    '  margin-bottom: '  + Math.floor(pad * 0.28) + 'px;' +
-    '  font-size: '      + bannerFont + 'px; color: #a8d1f0;' +
+    '  padding: '       + Math.floor(pad * 0.25) + 'px ' + Math.floor(pad * 0.45) + 'px;' +
+    '  margin-bottom: ' + Math.floor(pad * 0.28) + 'px;' +
+    '  font-size: '     + bannerFont + 'px; color: #a8d1f0;' +
     '  overflow: hidden;' + // Change to 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;' to suppress wrapping
     '}' +
 
     // Stacked event: time label on its own line above title.
-    // This mirrors the day column event format and reclaims width lost to the
-    // weather strip by eliminating the side-by-side time column.
     '.today-event {' +
     '  margin-bottom: '  + Math.floor(pad * 0.42) + 'px;' +
     '  padding-bottom: ' + Math.floor(pad * 0.32) + 'px;' +
@@ -1460,55 +1472,37 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     '}' +
     '.today-event:last-child { border-bottom: none; margin-bottom: 0; }' +
     '.today-evt-time {' +
-    '  font-size: '      + evtTimeFont + 'px; font-weight: 700;' +
+    '  font-size: '  + evtTimeFont + 'px; font-weight: 700;' +
     '  color: #4a9eda; line-height: 1.2;' +
     '}' +
     '.today-evt-title {' +
-    '  font-size: '      + evtTitleFont + 'px; font-weight: 600; color: #dde6f0;' +
+    '  font-size: '  + evtTitleFont + 'px; font-weight: 600; color: #dde6f0;' +
     '  line-height: 1.3;' +
     '  overflow: hidden;' + // Change to 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;' to suppress wrapping
     '}' +
     '.today-evt-loc {' +
-    '  font-size: '      + evtLocFont + 'px; color: #7ab3d9; margin-top: 1px;' +
+    '  font-size: '  + evtLocFont + 'px; color: #7ab3d9; margin-top: 1px;' +
     '  overflow: hidden;' + // Change to 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;' to suppress wrapping
     '}' +
 
-    // ── RIGHT PANEL — day columns ──
-    '.right {' +
-    '  flex: 1; display: flex;' +
-    '  gap: '            + Math.floor(pad * 0.55) + 'px; overflow: hidden;' +
-    '}' +
-    '.day-col {' +
-    '  flex: 1; background: #0f1e2e; border-radius: 6px;' +
-    '  display: flex; flex-direction: column; overflow: hidden; min-width: 0;' +
-    '}' +
-
-    // Day column header — same fixed height as .left-header so all headers are
-    // identical regardless of how much weather text or how many badge rows they contain.
-    '.day-col-header {' +
-    '  background: #132338; flex-shrink: 0;' +
-    '  padding: '         + Math.floor(pad * 0.38) + 'px ' + Math.floor(pad * 0.35) + 'px;' +
-    '  border-bottom: 1px solid #1e3a5a;' +
-    '  height: '          + hdrHeight + 'px; overflow: hidden;' +
-    '  display: flex; flex-direction: column;' +
-    '  gap: '             + hdrGap + 'px;' +
-    '}' +
-
-    // Day column body.
+    // ── DAY COLUMN BODIES (grid row 2, cols 2+) ──
+    // Rounded bottom corners complete the visual column started by day-col-header.
     '.day-col-body {' +
-    '  flex: 1; overflow: hidden;' +
-    '  padding: '         + Math.floor(pad * 0.32) + 'px;' +
+    '  background: #0f1e2e;' +
+    '  border-radius: 0 0 6px 6px;' +
+    '  overflow: hidden; min-height: 0;' +
+    '  padding: ' + Math.floor(pad * 0.32) + 'px;' +
     '}' +
     '.day-event { margin-bottom: ' + Math.floor(pad * 0.30) + 'px; }' +
     '.day-time {' +
-    '  font-size: '       + dayTimeFont + 'px; color: #4a9eda; font-weight: 600;' +
+    '  font-size: ' + dayTimeFont + 'px; color: #4a9eda; font-weight: 600;' +
     '}' +
     '.day-title {' +
-    '  font-size: '       + dayTitleFont + 'px; color: #c8dae8;' +
+    '  font-size: ' + dayTitleFont + 'px; color: #c8dae8;' +
     '  overflow: hidden;' + // Change to 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;' to suppress wrapping
     '}' +
     '.no-events {' +
-    '  font-size: '       + noEventsFont + 'px; color: #3d5a73; font-style: italic;' +
+    '  font-size: ' + noEventsFont + 'px; color: #3d5a73; font-style: italic;' +
     '}'
   );
 
@@ -1535,9 +1529,9 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
   }
 
   // --- Helper: build badge rows HTML for one date ---
-  // Always renders exactly maxBadgeCount elements: real badges for dates with
-  // alerts, invisible .badge-placeholder elements to pad dates without.
-  // Returns empty string when maxBadgeCount === 0 (no badges anywhere).
+  // Renders exactly maxBadgeCount elements: real badges where alerts exist,
+  // invisible .badge-placeholder elements to pad columns with fewer alerts.
+  // Returns empty string when maxBadgeCount === 0 (no future alerts anywhere).
   function buildBadgeRowsHtml(dateStr) {
     if (maxBadgeCount === 0) return '';
     const badges = badgesPerDate[dateStr] || [];
@@ -1565,13 +1559,11 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
   }
 
   // --- Helper: build weather rows HTML (H/L, condition, wind) ---
-  // Shared structure used by both the today header and day column headers.
-  // Returns the three .hdr-* div rows, or empty string if no weather data.
+  // Shared by both today header and day column headers.
   function buildWeatherRowsHtml(wx) {
     if (!wx) return '';
     let html = '';
 
-    // H/L row — show high and/or low depending on which is available.
     let hlInner = '';
     if (wx.high !== null && wx.low !== null) {
       hlInner = (
@@ -1601,19 +1593,15 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     return html;
   }
 
-  // --- Build today panel ---
-
-  // Today header date line: "Today — Mon 4/1"
-  // "Today" in white, " — Mon 4/1" in the same blue as day column dates.
-  const todayShort     = formatDateShort(todayStr);
-  const todayDateHtml  = (
+  // --- Build today header HTML ---
+  const todayShort    = formatDateShort(todayStr);
+  const todayDateHtml = (
     '<div class="hdr-date">' +
       '<span class="today-label">Today</span>' +
       '<span class="today-sep"> &mdash; </span>' +
       '<span class="today-short">' + escapeHtml(todayShort) + '</span>' +
     '</div>'
   );
-
   const todayHeaderHtml = (
     '<div class="left-header">' +
       todayDateHtml +
@@ -1622,6 +1610,26 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     '</div>'
   );
 
+  // --- Build day column headers HTML ---
+  // Collected separately so all headers can be emitted before any body,
+  // matching the CSS grid row order: row 1 = all headers, row 2 = all bodies.
+  let allColHeadersHtml = '';
+  for (const dateStr of displayDates.slice(1)) {
+    const colDateHtml = (
+      '<div class="hdr-date">' +
+        '<span class="col-date-text">' + escapeHtml(formatDateShort(dateStr)) + '</span>' +
+      '</div>'
+    );
+    allColHeadersHtml += (
+      '<div class="day-col-header">' +
+        colDateHtml +
+        buildWeatherRowsHtml(dailyWeatherMap[dateStr]) +
+        buildBadgeRowsHtml(dateStr) +
+      '</div>'
+    );
+  }
+
+  // --- Build today body HTML ---
   // Hourly weather strip.
   let wxStripHtml = '';
   if (hourlySlots.length > 0) {
@@ -1629,7 +1637,6 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     for (let i = 0; i < hourlySlots.length; i++) {
       const slot    = hourlySlots[i];
       const timeCls = slot.isNow ? 'wx-time now-label' : 'wx-time';
-      // Divider separates slots; omit after the last slot.
       const divider = (i < hourlySlots.length - 1) ? '<div class="wx-divider"></div>' : '';
       wxStripHtml += (
         '<div class="wx-slot">' +
@@ -1643,10 +1650,10 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     wxStripHtml += '</div>';
   }
 
-  // Today's calendar events (stacked: time above title).
+  // Today calendar events.
   const todayEvts  = getEventsForDate(events, todayStr);
-  const todayAD    = sortAllDayEvents(todayEvts.filter(e =>  e.allDay));
-  const todayTimed = todayEvts.filter(e => !e.allDay).sort(sortByStart);
+  const todayAD    = sortAllDayEvents(todayEvts.filter(function(e) { return e.allDay; }));
+  const todayTimed = todayEvts.filter(function(e) { return !e.allDay; }).sort(sortByStart);
 
   let todayEventsHtml = '';
   for (const e of todayAD) {
@@ -1672,38 +1679,20 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     }
   }
 
-  const todayPanelHtml = (
-    '<div class="left">' +
-      todayHeaderHtml +
-      '<div class="left-body">' +
-        wxStripHtml +
-        '<div class="today-events">' + todayEventsHtml + '</div>' +
-      '</div>' +
+  const todayBodyHtml = (
+    '<div class="left-body">' +
+      wxStripHtml +
+      '<div class="today-events">' + todayEventsHtml + '</div>' +
     '</div>'
   );
 
-  // --- Build right panel day columns ---
-  let rightHtml = '';
+  // --- Build day column bodies HTML ---
+  let allColBodiesHtml = '';
   for (const dateStr of displayDates.slice(1)) {
     const dayEvts = getEventsForDate(events, dateStr);
-    const dayAD   = sortAllDayEvents(dayEvts.filter(e =>  e.allDay));
-    const dayTmd  = dayEvts.filter(e => !e.allDay).sort(sortByStart);
+    const dayAD   = sortAllDayEvents(dayEvts.filter(function(e) { return e.allDay; }));
+    const dayTmd  = dayEvts.filter(function(e) { return !e.allDay; }).sort(sortByStart);
 
-    // Day column header: date line + weather rows + badge rows.
-    const colDateHtml = (
-      '<div class="hdr-date">' +
-        '<span class="col-date-text">' + escapeHtml(formatDateShort(dateStr)) + '</span>' +
-      '</div>'
-    );
-    const colHeaderHtml = (
-      '<div class="day-col-header">' +
-        colDateHtml +
-        buildWeatherRowsHtml(dailyWeatherMap[dateStr]) +
-        buildBadgeRowsHtml(dateStr) +
-      '</div>'
-    );
-
-    // Day column body: all-day banners then timed events.
     let colContent = '';
     for (const e of dayAD) {
       colContent += (
@@ -1725,36 +1714,26 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
       }
     }
 
-    rightHtml += (
-      '<div class="day-col">' +
-        colHeaderHtml +
-        '<div class="day-col-body">' + colContent + '</div>' +
-      '</div>'
-    );
+    allColBodiesHtml += '<div class="day-col-body">' + colContent + '</div>';
   }
 
   // --- Assemble full page ---
+  // Grid children order: all headers (row 1) then all bodies (row 2).
   const body = (
     '<div class="outer">' +
       (showLabel ? '<div class="cal-label">FFD Calendar</div>' : '') +
       alertStripHtml +
       '<div class="panels">' +
-        todayPanelHtml +
-        '<div class="right">' + rightHtml + '</div>' +
+        todayHeaderHtml +
+        allColHeadersHtml +
+        todayBodyHtml +
+        allColBodiesHtml +
       '</div>' +
     '</div>'
   );
 
   return buildHtmlDoc(width, height, styles, body);
 }
-
-
-// =============================================================================
-// STRIP LAYOUT — split / tri
-// =============================================================================
-// Compact list of upcoming days displayed as rows. No weather data — layout
-// is too narrow. This function is unchanged from the original deployment.
-
 function buildStripLayout(events, displayDates, layout, layoutKey) {
   const { width, height } = layout;
 
