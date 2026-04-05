@@ -1326,7 +1326,7 @@ function buildHtmlDoc(width, height, styles, body) {
     '<meta charset="UTF-8">' +
     '<meta http-equiv="refresh" content="' + CACHE_SECONDS + '">' +
     '<meta name="viewport" content="width=' + width + ', height=' + height + '">' +
-    '<title>Station Calendar</title>' +
+    '<title>FFD Calendar</title>' +
     '<style>' + styles + '</style>' +
     '</head>' +
     '<body>' + body + '</body>' +
@@ -2129,7 +2129,7 @@ function renderErrorPage(message, layout) {
     '<head>' +
     '<meta charset="UTF-8">' +
     '<meta http-equiv="refresh" content="' + ERROR_RETRY_SECONDS + '">' +
-    '<title>Station Calendar</title>' +
+    '<title>FFD Calendar</title>' +
     '<style>' +
     'html, body {' +
     '  width: '    + width  + 'px; height: ' + height + 'px;' +
