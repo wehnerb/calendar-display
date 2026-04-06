@@ -82,7 +82,7 @@ const CACHE_SECONDS = 900;
 // Increment this integer to immediately invalidate all cached pages.
 // Useful after configuration changes that affect the rendered output,
 // such as updating ALLDAY_COLORS, FILTER_EXACT, or DAYS_TO_SHOW.
-const CACHE_VERSION = 12;
+const CACHE_VERSION = 13;
 
 // Default layout when no ?layout= parameter is provided.
 // Options: 'full', 'wide', 'split', 'tri'
@@ -593,7 +593,7 @@ function buildHourlyStripSlots(hourlyPeriods, todayStr, now, maxSlots) {
       isNow: slots.length === 0,
       label: slots.length === 0 ? 'NOW' : formatHourLabel(new Date(p.startTime)),
       temp:  p.temperature,
-      svg:   getConditionSvg(p.shortForecast, WEATHER_ICON_SIZE),
+      svg:   getConditionSvg(p.shortForecast),
     });
     nextIndex += WEATHER_HOUR_INTERVAL;
   }
@@ -643,53 +643,25 @@ function getConditionColor(shortForecast) {
   return '#b0c4d4'; // default: gray-blue
 }
 
-// Returns an inline SVG weather icon string for a given NWS shortForecast.
-// Used in the hourly weather strip where there is no accompanying condition text.
-// sizePx controls the rendered square size of the SVG element.
-// All paths use a viewBox of "0 0 24 24" for consistent coordinate math.
-// Colors are hardcoded (not CSS variables) because this SVG renders inside a
-// known dark background and must not invert in light mode.
-function getConditionSvg(shortForecast, sizePx) {
-  if (!shortForecast) return buildWeatherSvg(sizePx, svgDefault());
-  const f = shortForecast.toLowerCase();
+// =============================================================================
+// SVG WEATHER ICONS — precomputed module-level constants
+// =============================================================================
+// Each constant is the complete <svg>...</svg> string for one weather condition,
+// built once when the Worker loads and reused for every request at zero CPU cost.
+// Using WEATHER_ICON_SIZE (a module-level constant) here is safe because module
+// constants are evaluated top-to-bottom before any request is processed.
+//
+// buildWeatherSvg and the individual svg*() functions have been replaced by these
+// constants to eliminate repeated string concatenation on every cache-miss request.
+// The SVG content never changes — there is no dynamic data in any of these strings.
 
-  if (f.includes('thunderstorm'))                   return buildWeatherSvg(sizePx, svgThunderstorm());
-  if (f.includes('blizzard') || f.includes('snow')) return buildWeatherSvg(sizePx, svgSnow());
-  if (f.includes('freezing rain') ||
-      f.includes('freezing drizzle') ||
-      f.includes('wintry mix') ||
-      f.includes('sleet'))                          return buildWeatherSvg(sizePx, svgWintryMix());
-  if (f.includes('rain') || f.includes('shower'))  return buildWeatherSvg(sizePx, svgRain());
-  if (f.includes('drizzle'))                        return buildWeatherSvg(sizePx, svgDrizzle());
-  if (f.includes('fog')   || f.includes('haze') ||
-      f.includes('smoke') || f.includes('mist'))   return buildWeatherSvg(sizePx, svgFog());
-  if (f.includes('blustery') || f.includes('windy') ||
-      f.includes('breezy'))                         return buildWeatherSvg(sizePx, svgWind());
-  if (f.includes('mostly cloudy'))                  return buildWeatherSvg(sizePx, svgMostlyCloudy());
-  if (f.includes('partly cloudy') ||
-      f.includes('partly sunny'))                   return buildWeatherSvg(sizePx, svgPartlyCloudy());
-  if (f.includes('mostly sunny') ||
-      f.includes('mostly clear'))                   return buildWeatherSvg(sizePx, svgMostlySunny());
-  if (f.includes('sunny') || f.includes('clear'))  return buildWeatherSvg(sizePx, svgSunny());
-  if (f.includes('cloudy') || f.includes('overcast')) return buildWeatherSvg(sizePx, svgCloudy());
-  return buildWeatherSvg(sizePx, svgDefault());
-}
+(function() {
+  var s = WEATHER_ICON_SIZE;
+  var open = '<svg xmlns="http://www.w3.org/2000/svg" width="' + s + '" height="' + s + '" viewBox="0 0 24 24" style="display:block;flex-shrink:0;">';
+  var close = '</svg>';
 
-// Wraps SVG path content in a sized SVG element.
-function buildWeatherSvg(sizePx, inner) {
-  return (
-    '<svg xmlns="http://www.w3.org/2000/svg"' +
-    ' width="' + sizePx + '" height="' + sizePx + '"' +
-    ' viewBox="0 0 24 24"' +
-    ' style="display:block;flex-shrink:0;">' +
-    inner +
-    '</svg>'
-  );
-}
-
-// Sun: filled circle + 8 short rays.
-function svgSunny() {
-  return (
+  // Sun: filled circle + 8 short rays.
+  self.WX_SVG_SUNNY = open +
     '<circle cx="12" cy="12" r="4.5" fill="#f0c040"/>' +
     '<line x1="12" y1="2" x2="12" y2="5" stroke="#f0c040" stroke-width="2" stroke-linecap="round"/>' +
     '<line x1="12" y1="19" x2="12" y2="22" stroke="#f0c040" stroke-width="2" stroke-linecap="round"/>' +
@@ -698,13 +670,11 @@ function svgSunny() {
     '<line x1="4.9" y1="4.9" x2="7.1" y2="7.1" stroke="#f0c040" stroke-width="2" stroke-linecap="round"/>' +
     '<line x1="16.9" y1="16.9" x2="19.1" y2="19.1" stroke="#f0c040" stroke-width="2" stroke-linecap="round"/>' +
     '<line x1="16.9" y1="7.1" x2="19.1" y2="4.9" stroke="#f0c040" stroke-width="2" stroke-linecap="round"/>' +
-    '<line x1="4.9" y1="19.1" x2="7.1" y2="16.9" stroke="#f0c040" stroke-width="2" stroke-linecap="round"/>'
-  );
-}
+    '<line x1="4.9" y1="19.1" x2="7.1" y2="16.9" stroke="#f0c040" stroke-width="2" stroke-linecap="round"/>' +
+    close;
 
-// Mostly sunny: sun (smaller, offset) + small cloud overlapping.
-function svgMostlySunny() {
-  return (
+  // Mostly sunny: smaller offset sun + small cloud overlapping.
+  self.WX_SVG_MOSTLY_SUNNY = open +
     '<circle cx="9" cy="9" r="3.5" fill="#f0c040"/>' +
     '<line x1="9" y1="2" x2="9" y2="4.5" stroke="#f0c040" stroke-width="1.8" stroke-linecap="round"/>' +
     '<line x1="9" y1="13.5" x2="9" y2="16" stroke="#f0c040" stroke-width="1.8" stroke-linecap="round"/>' +
@@ -712,119 +682,127 @@ function svgMostlySunny() {
     '<line x1="13.5" y1="9" x2="16" y2="9" stroke="#f0c040" stroke-width="1.8" stroke-linecap="round"/>' +
     '<line x1="3.8" y1="3.8" x2="5.5" y2="5.5" stroke="#f0c040" stroke-width="1.8" stroke-linecap="round"/>' +
     '<line x1="12.5" y1="12.5" x2="14.2" y2="14.2" stroke="#f0c040" stroke-width="1.8" stroke-linecap="round"/>' +
-    '<path d="M10 16 a4 4 0 0 1 8 0 a2.5 2.5 0 0 1 0 5 H10 a3 3 0 0 1 0-5Z" fill="#5b7a94"/>'
-  );
-}
+    '<path d="M10 16 a4 4 0 0 1 8 0 a2.5 2.5 0 0 1 0 5 H10 a3 3 0 0 1 0-5Z" fill="#5b7a94"/>' +
+    close;
 
-// Partly cloudy: sun peeking behind a larger cloud.
-function svgPartlyCloudy() {
-  return (
+  // Partly cloudy: sun peeking behind a larger cloud.
+  self.WX_SVG_PARTLY_CLOUDY = open +
     '<circle cx="8" cy="8" r="3" fill="#c8a830"/>' +
     '<line x1="8" y1="2" x2="8" y2="4" stroke="#c8a830" stroke-width="1.8" stroke-linecap="round"/>' +
     '<line x1="8" y1="12" x2="8" y2="14" stroke="#c8a830" stroke-width="1.8" stroke-linecap="round"/>' +
     '<line x1="2" y1="8" x2="4" y2="8" stroke="#c8a830" stroke-width="1.8" stroke-linecap="round"/>' +
     '<line x1="12" y1="8" x2="14" y2="8" stroke="#c8a830" stroke-width="1.8" stroke-linecap="round"/>' +
-    '<path d="M8 15 a5 5 0 0 1 10 0 a3 3 0 0 1 0 6 H8 a4 4 0 0 1 0-6Z" fill="#4a6880"/>'
-  );
-}
+    '<path d="M8 15 a5 5 0 0 1 10 0 a3 3 0 0 1 0 6 H8 a4 4 0 0 1 0-6Z" fill="#4a6880"/>' +
+    close;
 
-// Mostly cloudy: tiny sun peek + large cloud dominating.
-function svgMostlyCloudy() {
-  return (
+  // Mostly cloudy: tiny sun peek + large cloud dominating.
+  self.WX_SVG_MOSTLY_CLOUDY = open +
     '<circle cx="7" cy="7" r="2.5" fill="#c8a830" opacity="0.8"/>' +
     '<path d="M6 13 a6 6 0 0 1 12 0 a3.5 3.5 0 0 1 0 7 H6 a4.5 4.5 0 0 1 0-7Z" fill="#4a6880"/>' +
-    '<path d="M4 16 a4 4 0 0 1 8 0 a2.5 2.5 0 0 1 0 5 H4 a3 3 0 0 1 0-5Z" fill="#5b7a94"/>'
-  );
-}
+    '<path d="M4 16 a4 4 0 0 1 8 0 a2.5 2.5 0 0 1 0 5 H4 a3 3 0 0 1 0-5Z" fill="#5b7a94"/>' +
+    close;
 
-// Cloudy: two overlapping cloud shapes, no sun.
-function svgCloudy() {
-  return (
+  // Cloudy: two overlapping cloud shapes, no sun.
+  self.WX_SVG_CLOUDY = open +
     '<path d="M5 14 a6 6 0 0 1 12 0 a3.5 3.5 0 0 1 0 7 H5 a4.5 4.5 0 0 1 0-7Z" fill="#4a6880"/>' +
-    '<path d="M3 17 a4 4 0 0 1 8 0 a2.5 2.5 0 0 1 0 5 H3 a3 3 0 0 1 0-5Z" fill="#5b7a94"/>'
-  );
-}
+    '<path d="M3 17 a4 4 0 0 1 8 0 a2.5 2.5 0 0 1 0 5 H3 a3 3 0 0 1 0-5Z" fill="#5b7a94"/>' +
+    close;
 
-// Rain: cloud + 3 angled rain lines.
-function svgRain() {
-  return (
+  // Rain: cloud + 3 angled rain lines.
+  self.WX_SVG_RAIN = open +
     '<path d="M4 10 a6 6 0 0 1 12 0 a3.5 3.5 0 0 1 0 7 H4 a4.5 4.5 0 0 1 0-7Z" fill="#4a6880"/>' +
     '<line x1="7" y1="19" x2="5" y2="23" stroke="#60b0f0" stroke-width="2" stroke-linecap="round"/>' +
     '<line x1="12" y1="19" x2="10" y2="23" stroke="#60b0f0" stroke-width="2" stroke-linecap="round"/>' +
-    '<line x1="17" y1="19" x2="15" y2="23" stroke="#60b0f0" stroke-width="2" stroke-linecap="round"/>'
-  );
-}
+    '<line x1="17" y1="19" x2="15" y2="23" stroke="#60b0f0" stroke-width="2" stroke-linecap="round"/>' +
+    close;
 
-// Drizzle: cloud + lighter, more numerous short lines.
-function svgDrizzle() {
-  return (
+  // Drizzle: cloud + lighter, more numerous short lines.
+  self.WX_SVG_DRIZZLE = open +
     '<path d="M4 10 a6 6 0 0 1 12 0 a3.5 3.5 0 0 1 0 7 H4 a4.5 4.5 0 0 1 0-7Z" fill="#4a6880"/>' +
     '<line x1="7" y1="19" x2="6" y2="22" stroke="#60b0f0" stroke-width="1.5" stroke-linecap="round"/>' +
     '<line x1="11" y1="19" x2="10" y2="22" stroke="#60b0f0" stroke-width="1.5" stroke-linecap="round"/>' +
     '<line x1="15" y1="19" x2="14" y2="22" stroke="#60b0f0" stroke-width="1.5" stroke-linecap="round"/>' +
     '<line x1="9" y1="22" x2="8" y2="24" stroke="#60b0f0" stroke-width="1.5" stroke-linecap="round"/>' +
-    '<line x1="13" y1="22" x2="12" y2="24" stroke="#60b0f0" stroke-width="1.5" stroke-linecap="round"/>'
-  );
-}
+    '<line x1="13" y1="22" x2="12" y2="24" stroke="#60b0f0" stroke-width="1.5" stroke-linecap="round"/>' +
+    close;
 
-// Snow: cloud + 5 small filled dots.
-function svgSnow() {
-  return (
+  // Snow: cloud + 5 small filled dots.
+  self.WX_SVG_SNOW = open +
     '<path d="M4 9 a6 6 0 0 1 12 0 a3.5 3.5 0 0 1 0 7 H4 a4.5 4.5 0 0 1 0-7Z" fill="#4a6880"/>' +
     '<circle cx="7"  cy="20" r="1.8" fill="#a8d8f0"/>' +
     '<circle cx="12" cy="18" r="1.8" fill="#a8d8f0"/>' +
     '<circle cx="17" cy="20" r="1.8" fill="#a8d8f0"/>' +
     '<circle cx="9"  cy="23" r="1.8" fill="#a8d8f0"/>' +
-    '<circle cx="15" cy="23" r="1.8" fill="#a8d8f0"/>'
-  );
-}
+    '<circle cx="15" cy="23" r="1.8" fill="#a8d8f0"/>' +
+    close;
 
-// Wintry mix: cloud + alternating rain line and snow dot.
-function svgWintryMix() {
-  return (
+  // Wintry mix: cloud + alternating rain line and snow dot.
+  self.WX_SVG_WINTRY_MIX = open +
     '<path d="M4 9 a6 6 0 0 1 12 0 a3.5 3.5 0 0 1 0 7 H4 a4.5 4.5 0 0 1 0-7Z" fill="#4a6880"/>' +
     '<line x1="7"  y1="18" x2="6"  y2="22" stroke="#60b0f0" stroke-width="2" stroke-linecap="round"/>' +
     '<circle cx="12" cy="20" r="2" fill="#a0b0e0"/>' +
     '<line x1="17" y1="18" x2="16" y2="22" stroke="#60b0f0" stroke-width="2" stroke-linecap="round"/>' +
     '<circle cx="9"  cy="23" r="1.8" fill="#a0b0e0"/>' +
-    '<circle cx="15" cy="23" r="1.8" fill="#a0b0e0"/>'
-  );
-}
+    '<circle cx="15" cy="23" r="1.8" fill="#a0b0e0"/>' +
+    close;
 
-// Fog: three horizontal lines of decreasing length.
-function svgFog() {
-  return (
+  // Fog: four horizontal lines of decreasing length.
+  self.WX_SVG_FOG = open +
     '<line x1="2"  y1="8"  x2="22" y2="8"  stroke="#b0c4d4" stroke-width="2.5" stroke-linecap="round"/>' +
     '<line x1="4"  y1="12" x2="20" y2="12" stroke="#b0c4d4" stroke-width="2.5" stroke-linecap="round"/>' +
     '<line x1="2"  y1="16" x2="22" y2="16" stroke="#b0c4d4" stroke-width="2.5" stroke-linecap="round"/>' +
-    '<line x1="6"  y1="20" x2="18" y2="20" stroke="#b0c4d4" stroke-width="2"   stroke-linecap="round"/>'
-  );
-}
+    '<line x1="6"  y1="20" x2="18" y2="20" stroke="#b0c4d4" stroke-width="2"   stroke-linecap="round"/>' +
+    close;
 
-// Wind: three curved horizontal lines (longer, shorter, shortest).
-function svgWind() {
-  return (
+  // Wind: three curved horizontal lines.
+  self.WX_SVG_WIND = open +
     '<path d="M2 8 Q10 8 14 4 a4 4 0 0 1 4 4 a4 4 0 0 1-4 4 H2" fill="none" stroke="#b0c4d4" stroke-width="2" stroke-linecap="round"/>' +
     '<path d="M2 14 Q8 14 11 11 a3 3 0 0 1 3 3 a3 3 0 0 1-3 3 H2" fill="none" stroke="#b0c4d4" stroke-width="2" stroke-linecap="round"/>' +
-    '<line x1="2" y1="19" x2="16" y2="19" stroke="#b0c4d4" stroke-width="2" stroke-linecap="round"/>'
-  );
-}
+    '<line x1="2" y1="19" x2="16" y2="19" stroke="#b0c4d4" stroke-width="2" stroke-linecap="round"/>' +
+    close;
 
-// Thunderstorm: dark cloud + lightning bolt.
-function svgThunderstorm() {
-  return (
+  // Thunderstorm: dark cloud + lightning bolt.
+  self.WX_SVG_THUNDERSTORM = open +
     '<path d="M3 8 a6 6 0 0 1 12 0 a3.5 3.5 0 0 1 0 7 H3 a4.5 4.5 0 0 1 0-7Z" fill="#3a5068"/>' +
-    '<polyline points="13,15 9,21 13,21 9,27" fill="none" stroke="#f0d040" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>'
-  );
-}
+    '<polyline points="13,15 9,21 13,21 9,27" fill="none" stroke="#f0d040" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>' +
+    close;
 
-// Default: simple thermometer shape.
-function svgDefault() {
-  return (
+  // Default: simple thermometer shape.
+  self.WX_SVG_DEFAULT = open +
     '<rect x="10" y="3" width="4" height="13" rx="2" fill="#b0c4d4"/>' +
     '<circle cx="12" cy="18" r="4" fill="#b0c4d4"/>' +
-    '<rect x="11" y="6" width="2" height="9" fill="#0d1b2a"/>'
-  );
+    '<rect x="11" y="6" width="2" height="9" fill="#0d1b2a"/>' +
+    close;
+}());
+
+// Returns the precomputed SVG icon string for a given NWS shortForecast.
+// This is now a pure lookup — no string construction occurs at request time.
+// The sizePx parameter is accepted for API compatibility but is not used here
+// since all icons are precomputed at WEATHER_ICON_SIZE.
+function getConditionSvg(shortForecast) {
+  if (!shortForecast) return WX_SVG_DEFAULT;
+  const f = shortForecast.toLowerCase();
+
+  if (f.includes('thunderstorm'))                   return WX_SVG_THUNDERSTORM;
+  if (f.includes('blizzard') || f.includes('snow')) return WX_SVG_SNOW;
+  if (f.includes('freezing rain') ||
+      f.includes('freezing drizzle') ||
+      f.includes('wintry mix') ||
+      f.includes('sleet'))                          return WX_SVG_WINTRY_MIX;
+  if (f.includes('rain') || f.includes('shower'))  return WX_SVG_RAIN;
+  if (f.includes('drizzle'))                        return WX_SVG_DRIZZLE;
+  if (f.includes('fog')   || f.includes('haze') ||
+      f.includes('smoke') || f.includes('mist'))   return WX_SVG_FOG;
+  if (f.includes('blustery') || f.includes('windy') ||
+      f.includes('breezy'))                         return WX_SVG_WIND;
+  if (f.includes('mostly cloudy'))                  return WX_SVG_MOSTLY_CLOUDY;
+  if (f.includes('partly cloudy') ||
+      f.includes('partly sunny'))                   return WX_SVG_PARTLY_CLOUDY;
+  if (f.includes('mostly sunny') ||
+      f.includes('mostly clear'))                   return WX_SVG_MOSTLY_SUNNY;
+  if (f.includes('sunny') || f.includes('clear'))  return WX_SVG_SUNNY;
+  if (f.includes('cloudy') || f.includes('overcast')) return WX_SVG_CLOUDY;
+  return WX_SVG_DEFAULT;
 }
 
 // Returns the list of alert features that should appear as a future badge on
