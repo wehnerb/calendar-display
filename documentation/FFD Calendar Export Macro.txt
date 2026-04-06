@@ -1,0 +1,164 @@
+Private Declare PtrSafe Sub GetSystemTimeZoneInformation Lib "kernel32" (lpTimeZoneInformation As Any)
+
+' =============================================================================
+' Outlook VBA Macro — Auto-export FFD Calendar to ICS on startup
+' =============================================================================
+' Runs automatically each time Outlook starts. Exports the next 30 days of
+' the FFD Calendar public folder to a fixed file path for rclone to upload
+' to Google Drive.
+'
+' Export path: U:\Fire\BWehner\FFD Calendar Export\FFD Calendar Calendar.ics
+' Calendar:    Public Folders\Fire\FFD Calendar
+' Date range:  Today through today + 30 days
+' =============================================================================
+
+Private Sub Application_Startup()
+
+    ' --- Configuration ---
+    Const EXPORT_PATH As String = "U:\Fire\BWehner\FFD Calendar Export\FFD Calendar Calendar.ics"
+    Const DAYS_AHEAD  As Integer = 30
+
+    Dim objNamespace As Outlook.NameSpace
+    Dim objFolder    As Outlook.MAPIFolder
+    Dim objItems     As Outlook.Items
+    Dim objItem      As Object
+    Dim objFSO       As Object
+    Dim objFile      As Object
+    Dim dtStart      As Date
+    Dim dtEnd        As Date
+    Dim strFilter    As String
+
+    On Error GoTo ErrorHandler
+
+    dtStart = Date - 1
+    dtEnd = Date + DAYS_AHEAD
+
+    ' Navigate to the FFD Calendar public folder.
+    Set objNamespace = Application.GetNamespace("MAPI")
+    Set objFolder = objNamespace.GetDefaultFolder(18) _
+                           .Folders("Fire") _
+                           .Folders("FFD Calendar")
+
+    ' Retrieve all items in the folder and apply a date range filter.
+    ' Items.Restrict is more efficient than looping all items manually.
+    Set objItems = objFolder.Items
+    objItems.IncludeRecurrences = True
+    objItems.Sort "[Start]"
+
+    strFilter = "[Start] >= '" & Format(dtStart, "mm/dd/yyyy") & "'" & _
+                " AND [Start] <= '" & Format(dtEnd, "mm/dd/yyyy") & "'"
+    Set objItems = objItems.Restrict(strFilter)
+
+    ' Open the output file for writing, overwriting any previous export.
+    Set objFSO = CreateObject("Scripting.FileSystemObject")
+    Set objFile = objFSO.CreateTextFile(EXPORT_PATH, True, False)
+
+    ' Write the ICS file header.
+    objFile.WriteLine "BEGIN:VCALENDAR"
+    objFile.WriteLine "VERSION:2.0"
+    objFile.WriteLine "PRODID:-//FFD Calendar Export//Outlook VBA//EN"
+    objFile.WriteLine "CALSCALE:GREGORIAN"
+    objFile.WriteLine "METHOD:PUBLISH"
+
+    ' Write each calendar item as a VEVENT block.
+    Dim itemCount As Integer
+    itemCount = 0
+
+    For Each objItem In objItems
+        If objItem.Class = olAppointment Then
+
+            Dim dtItemStart As Date
+            Dim dtItemEnd   As Date
+            Dim bAllDay     As Boolean
+
+            dtItemStart = objItem.Start
+            dtItemEnd = objItem.End
+            bAllDay = objItem.AllDayEvent
+
+            objFile.WriteLine "BEGIN:VEVENT"
+
+            ' Write timestamps as local time with Windows timezone name.
+            ' All-day events use DATE format; timed events use DATE-TIME
+            ' with TZID. The calendar-display Worker maps "Central Standard
+            ' Time" to America/Chicago via its windowsToIana() function.
+            If bAllDay Then
+                objFile.WriteLine "DTSTART;VALUE=DATE:" & Format(dtItemStart, "YYYYMMDD")
+                objFile.WriteLine "DTEND;VALUE=DATE:" & Format(dtItemEnd, "YYYYMMDD")
+            Else
+                objFile.WriteLine "DTSTART;TZID=""Central Standard Time"":" & FormatLocal(dtItemStart)
+                objFile.WriteLine "DTEND;TZID=""Central Standard Time"":" & FormatLocal(dtItemEnd)
+            End If
+
+            ' Write summary (title), escaping special ICS characters.
+            objFile.WriteLine "SUMMARY:" & EscapeICS(objItem.Subject)
+
+            ' Write location if present.
+            If Len(Trim(objItem.Location)) > 0 Then
+                objFile.WriteLine "LOCATION:" & EscapeICS(objItem.Location)
+            End If
+
+            ' Write a unique identifier for this event.
+            objFile.WriteLine "UID:" & objItem.EntryID
+
+            objFile.WriteLine "END:VEVENT"
+            itemCount = itemCount + 1
+
+        End If
+    Next objItem
+
+    ' Write the ICS file footer.
+    objFile.WriteLine "END:VCALENDAR"
+    objFile.Close
+
+    ' Clean up object references.
+    Set objFile = Nothing
+    Set objFSO = Nothing
+    Set objItems = Nothing
+    Set objFolder = Nothing
+    Set objNamespace = Nothing
+
+    Exit Sub
+
+ErrorHandler:
+    ' Log errors to a text file beside the ICS export so failures
+    ' are visible without disrupting Outlook startup.
+    Dim objFSOErr  As Object
+    Dim objFileErr As Object
+
+    Set objFSOErr = CreateObject("Scripting.FileSystemObject")
+    Set objFileErr = objFSOErr.OpenTextFile( _
+        "U:\Fire\BWehner\FFD Calendar Export\export-error.log", 8, True)
+    objFileErr.WriteLine Now & " - Error " & Err.Number & ": " & Err.Description
+    objFileErr.Close
+
+    Set objFileErr = Nothing
+    Set objFSOErr = Nothing
+
+End Sub
+
+
+' =============================================================================
+' HELPERS
+' =============================================================================
+
+' Formats a local VBA Date value as an ICS datetime string (YYYYMMDDTHHMMSS).
+' Written as local time with a TZID parameter rather than UTC, so no Windows
+' API timezone conversion is needed. The calendar-display Worker handles the
+' TZID mapping via its windowsToIana() function.
+Private Function FormatLocal(dtLocal As Date) As String
+    FormatLocal = Format(dtLocal, "YYYYMMDD") & "T" & Format(dtLocal, "HHMMSS")
+End Function
+
+' Escapes special characters in ICS text values per RFC 5545.
+' Semicolons, commas, and backslashes must be escaped.
+' Newlines are replaced with the ICS \n sequence.
+Private Function EscapeICS(str As String) As String
+    Dim s As String
+    s = str
+    s = Replace(s, "\", "\\")
+    s = Replace(s, ";", "\;")
+    s = Replace(s, ",", "\,")
+    s = Replace(s, Chr(10), "\n")
+    s = Replace(s, Chr(13), "")
+    EscapeICS = s
+End Function
