@@ -4,6 +4,9 @@ A Cloudflare Worker that fetches a `.ics` calendar file from Nextcloud via WebDA
 
 The `wide` and `full` layouts also fetch live NWS weather data and display it alongside the calendar: daily high/low temperatures and conditions in every column header, an hourly forecast strip in the today panel, and active/upcoming weather alert banners and badges.
 
+## System Documentation
+Full system documentation is maintained at: https://github.com/wehnerb/ffd-display-system-documentation
+
 ## Live URLs
 
 | Environment | URL |
