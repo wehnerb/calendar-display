@@ -82,7 +82,7 @@ const CACHE_SECONDS = 900;
 // Increment this integer to immediately invalidate all cached pages.
 // Useful after configuration changes that affect the rendered output,
 // such as updating ALLDAY_COLORS, FILTER_EXACT, or DAYS_TO_SHOW.
-const CACHE_VERSION = 15;
+const CACHE_VERSION = 16;
 
 // Default layout when no ?layout= parameter is provided.
 // Options: 'full', 'wide', 'split', 'tri'
@@ -1579,7 +1579,7 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     // the 2-line box; 2-line text fills it naturally.
     '.future-alert-badge {' +
     '  border-radius: 3px;' +
-    '  padding: '      + Math.floor(pad * 0.1) + 'px ' + Math.floor(pad * 0.35) + 'px;' +
+    '  padding: '      + Math.floor(pad * 0.05) + 'px ' + Math.floor(pad * 0.35) + 'px;' +
     '  font-size: '    + badgeFont + 'px; font-weight: 600;' +
     '  height: '       + badgeRowH + 'px; overflow: hidden;' +
     '  display: flex; align-items: center;' +
