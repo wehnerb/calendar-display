@@ -82,7 +82,7 @@ const CACHE_SECONDS = 900;
 // Increment this integer to immediately invalidate all cached pages.
 // Useful after configuration changes that affect the rendered output,
 // such as updating ALLDAY_COLORS, FILTER_EXACT, or DAYS_TO_SHOW.
-const CACHE_VERSION = 17;
+const CACHE_VERSION = 18;
 
 // Default layout when no ?layout= parameter is provided.
 // Options: 'full', 'wide', 'split', 'tri'
@@ -1857,7 +1857,13 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
   // Today calendar events.
   const todayEvts  = getEventsForDate(events, todayStr);
   const todayAD    = sortAllDayEvents(todayEvts.filter(function(e) { return e.allDay; }));
-  const todayTimed = todayEvts.filter(function(e) { return !e.allDay; }).sort(sortByStart);
+  
+  // Exclude timed events whose end time (or start time if no end) has already passed.
+const todayTimed = todayEvts.filter(function(e) {
+  if (e.allDay) return false;
+  const cutoff = e.end || e.start;
+  return cutoff > now;
+}).sort(sortByStart);
 
   let todayEventsHtml = '';
   for (const e of todayAD) {
