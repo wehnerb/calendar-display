@@ -82,7 +82,7 @@ const CACHE_SECONDS = 900;
 // Increment this integer to immediately invalidate all cached pages.
 // Useful after configuration changes that affect the rendered output,
 // such as updating ALLDAY_COLORS, FILTER_EXACT, or DAYS_TO_SHOW.
-const CACHE_VERSION = 13;
+const CACHE_VERSION = 17;
 
 // Default layout when no ?layout= parameter is provided.
 // Options: 'full', 'wide', 'split', 'tri'
@@ -1352,12 +1352,12 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
   const colDateFont     = Math.floor(height * 0.035); // date line — matches main dayHeaderFont
   const colWxFont       = Math.floor(height * 0.025); // weather rows (H/L, condition, wind)
   const colWindFont     = Math.floor(colWxFont * 0.95); // wind information in all columns
-  const badgeFont       = Math.floor(height * 0.03); // future weather alert badge text
+  const badgeFont       = Math.floor(height * 0.023); // future weather alert badge text
 
   // Body fonts — today panel events.
-  const evtTimeFont     = Math.floor(height * 0.030); // stacked event time label
-  const evtTitleFont    = Math.floor(height * 0.033); // event title — matches main todayTitleFont
-  const evtLocFont      = Math.floor(height * 0.025); // event location — matches main todayLocFont
+  const evtTimeFont     = Math.floor(height * 0.028); // stacked event time label
+  const evtTitleFont    = Math.floor(height * 0.031); // event title — matches main todayTitleFont
+  const evtLocFont      = Math.floor(height * 0.023); // event location — matches main todayLocFont
 
   // Body fonts — day column events.
   const dayTimeFont     = Math.floor(height * 0.023); // time label
