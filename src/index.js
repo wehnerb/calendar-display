@@ -82,7 +82,7 @@ const CACHE_SECONDS = 900;
 // Increment this integer to immediately invalidate all cached pages.
 // Useful after configuration changes that affect the rendered output,
 // such as updating ALLDAY_COLORS, FILTER_EXACT, or DAYS_TO_SHOW.
-const CACHE_VERSION = 19;
+const CACHE_VERSION = 20;
 
 // Default layout when no ?layout= parameter is provided.
 // Options: 'full', 'wide', 'split', 'tri'
@@ -164,7 +164,7 @@ const NWS_ALERTS_CACHE_SECONDS = 900;
 // hourly strip in the today panel, active alert banners, and future alert badges.
 // Set to false to hide all weather entirely — only the calendar is shown.
 // Only affects wide/full layouts; split/tri never show weather regardless.
-const SHOW_WEATHER = true;
+const SHOW_WEATHER = false;
 
 
 // =============================================================================
