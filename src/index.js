@@ -82,7 +82,7 @@ const CACHE_SECONDS = 900;
 // Increment this integer to immediately invalidate all cached pages.
 // Useful after configuration changes that affect the rendered output,
 // such as updating ALLDAY_COLORS, FILTER_EXACT, or DAYS_TO_SHOW.
-const CACHE_VERSION = 18;
+const CACHE_VERSION = 19;
 
 // Default layout when no ?layout= parameter is provided.
 // Options: 'full', 'wide', 'split', 'tri'
@@ -160,6 +160,12 @@ const NWS_FORECAST_CACHE_SECONDS = 3600;
 // Alerts are near-real-time. 900 (15 minutes) matches the page cache interval.
 const NWS_ALERTS_CACHE_SECONDS = 900;
 
+// Set to true to show all NWS weather data: daily forecast (H/L, condition, wind),
+// hourly strip in the today panel, active alert banners, and future alert badges.
+// Set to false to hide all weather entirely — only the calendar is shown.
+// Only affects wide/full layouts; split/tri never show weather regardless.
+const SHOW_WEATHER = true;
+
 
 // =============================================================================
 // MAIN WORKER ENTRY POINT
@@ -207,18 +213,22 @@ export default {
       // minimise total latency. Each NWS fetch catches its own errors and returns
       // null on failure so the calendar renders without weather rather than
       // returning an error page.
+      // When SHOW_WEATHER is false, NWS fetches are skipped entirely — no weather
+      // data is retrieved regardless of whether alerts or forecasts are active.
       let icsText;
       let dailyPeriods  = null;
       let hourlyPeriods = null;
       let alertFeatures = null;
 
-      if (useStrip) {
+      if (useStrip || !SHOW_WEATHER) {
+        // Strip layouts and weather-disabled split layouts only need the ICS file.
         icsText = await fetchIcsFromNextcloud(
           env.NEXTCLOUD_URL,
           env.NEXTCLOUD_USERNAME,
           env.NEXTCLOUD_PASSWORD
         );
       } else {
+        // Weather-enabled split layouts fetch ICS and all NWS endpoints in parallel.
         [icsText, dailyPeriods, hourlyPeriods, alertFeatures] = await Promise.all([
           fetchIcsFromNextcloud(
             env.NEXTCLOUD_URL,
@@ -1413,13 +1423,19 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
   // Worst-case header height assumes:
   //   - condition wraps to 3 lines (longest possible NWS forecast text)
   //   - actual maxBadgeCount badge rows (we know this exactly)
-  const hdrPad  = Math.floor(pad * 0.38) * 2; // top + bottom padding on headers
+  const hdrPad = Math.floor(pad * 0.38) * 2; // top + bottom padding on headers
+
+  // When weather is enabled, the worst-case header height includes the H/L row,
+  // up to 3 lines of condition text, the wind row, and any badge rows.
+  // When weather is disabled, headers contain only the date line.
   const worstCondLines  = 3;
-  const worstHdrContent = Math.ceil(colDateFont * lh)
-                        + Math.ceil(colWxFont   * lh)
-                        + Math.ceil(colWxFont   * lh) * worstCondLines
-                        + Math.ceil(colWindFont * lh)
-                        + (hdrGap * 3);
+  const worstHdrContent = SHOW_WEATHER
+    ? Math.ceil(colDateFont * lh)
+      + Math.ceil(colWxFont   * lh)
+      + Math.ceil(colWxFont   * lh) * worstCondLines
+      + Math.ceil(colWindFont * lh)
+      + (hdrGap * 3)
+    : Math.ceil(colDateFont * lh);
   const badgesBlock     = maxBadgeCount > 0
     ? hdrGap + (maxBadgeCount * badgeRowH) + ((maxBadgeCount - 1) * hdrGap)
     : 0;
@@ -1499,19 +1515,22 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
       : '') +
 
     // Active NWS alert banners — only rendered when active alerts exist.
-    '.alert-strip {' +
-    '  display: flex; flex-direction: column;' +
-    '  gap: ' + bannerGap + 'px; flex-shrink: 0;' +
-    '}' +
-    '.alert-banner {' +
-    '  border-radius: 4px;' +
-    '  padding: '   + Math.floor(pad * 0.3) + 'px ' + pad + 'px;' +
-    '  font-size: ' + alertBannerFont + 'px; font-weight: 700;' +
-    '  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;' +
-    '}' +
-    '.alert-warning  { background:#5c1a1a; border-left:4px solid #c0392b; color:#f0a8a8; }' +
-    '.alert-watch    { background:#4a2a0a; border-left:4px solid #d68910; color:#f0d08a; }' +
-    '.alert-advisory { background:#3a3a1a; border-left:4px solid #b7950b; color:#e0d890; }' +
+    // CSS omitted entirely when SHOW_WEATHER is false.
+    (SHOW_WEATHER
+      ? '.alert-strip {' +
+        '  display: flex; flex-direction: column;' +
+        '  gap: ' + bannerGap + 'px; flex-shrink: 0;' +
+        '}' +
+        '.alert-banner {' +
+        '  border-radius: 4px;' +
+        '  padding: '   + Math.floor(pad * 0.3) + 'px ' + pad + 'px;' +
+        '  font-size: ' + alertBannerFont + 'px; font-weight: 700;' +
+        '  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;' +
+        '}' +
+        '.alert-warning  { background:#5c1a1a; border-left:4px solid #c0392b; color:#f0a8a8; }' +
+        '.alert-watch    { background:#4a2a0a; border-left:4px solid #d68910; color:#f0d08a; }' +
+        '.alert-advisory { background:#3a3a1a; border-left:4px solid #b7950b; color:#e0d890; }'
+      : '') +
 
     // ── PANELS GRID ──
     // CSS grid: row 1 = auto (sizes to tallest header); row 2 = 1fr (fills remaining).
@@ -1558,43 +1577,42 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     '.hdr-date .today-short  { color: #5b9ecf; }' +
     '.hdr-date .col-date-text { color: #5b9ecf; }' +
 
-    // Shared weather rows.
-    '.hdr-hl { font-size: ' + colWxFont + 'px; font-weight: 700; color: #dde6f0; }' +
-    '.hdr-hl .hi { color: #f0a060; }' +
-    '.hdr-hl .lo { color: #80c8f0; }' +
-    // Condition text wraps freely — no line-clamp. The CSS grid row auto-sizes
-    // to the tallest header content, so all headers expand uniformly to match
-    // the column with the longest forecast text.
-    '.hdr-cond {' +
-    '  font-size: '    + colWxFont + 'px; color: #a8d1f0;' +
-    '  line-height: 1.4;' +
-    '}' +
-    '.hdr-wind { font-size: ' + colWindFont + 'px; color: #7ab3d9; }' +
+    // Shared weather rows — CSS omitted entirely when SHOW_WEATHER is false.
+    (SHOW_WEATHER
+      ? '.hdr-hl { font-size: ' + colWxFont + 'px; font-weight: 700; color: #dde6f0; }' +
+        '.hdr-hl .hi { color: #f0a060; }' +
+        '.hdr-hl .lo { color: #80c8f0; }' +
+        // Condition text wraps freely — no line-clamp. The CSS grid row auto-sizes
+        // to the tallest header content, so all headers expand uniformly to match
+        // the column with the longest forecast text.
+        '.hdr-cond {' +
+        '  font-size: '    + colWxFont + 'px; color: #a8d1f0;' +
+        '  line-height: 1.4;' +
+        '}' +
+        '.hdr-wind { font-size: ' + colWindFont + 'px; color: #7ab3d9; }'
+      : '') +
 
-    // Future alert badge rows.
-    // Fixed height = 2 text lines + padding + 2px borders. Using a fixed height
-    // (rather than free-wrap) keeps all badge rows the same height within each
-    // column regardless of individual text length, so badge rows stack evenly.
-    // display:flex + align-items:center vertically centers single-line text in
-    // the 2-line box; 2-line text fills it naturally.
-    '.future-alert-badge {' +
-    '  border-radius: 3px;' +
-    '  padding: '      + Math.floor(pad * 0.12) + 'px ' + Math.floor(pad * 0.35) + 'px;' +
-    '  font-size: '    + badgeFont + 'px; font-weight: 600;' +
-    '  height: '       + badgeRowH + 'px; overflow: hidden;' +
-    '  display: flex; align-items: center;' +
-    '  border: 1px solid transparent; line-height: 1.4;' +
-    '}' +
-    '.badge-warning   { background:#3a1a1a; border-color:#c0392b; color:#f0a8a8; }' +
-    '.badge-watch     { background:#2e2a1a; border-color:#d68910; color:#f0d08a; }' +
-    '.badge-advisory  { background:#3a3a1a; border-color:#b7950b; color:#e0d890; }' +
-    // Invisible spacer — same fixed height as a real badge, no visible content.
-    '.badge-placeholder {' +
-    '  background: transparent !important;' +
-    '  border-color: transparent !important;' +
-    '  color: transparent !important;' +
-    '  pointer-events: none;' +
-    '}' +
+    // Future alert badge rows — CSS omitted entirely when SHOW_WEATHER is false.
+    (SHOW_WEATHER
+      ? '.future-alert-badge {' +
+        '  border-radius: 3px;' +
+        '  padding: '      + Math.floor(pad * 0.12) + 'px ' + Math.floor(pad * 0.35) + 'px;' +
+        '  font-size: '    + badgeFont + 'px; font-weight: 600;' +
+        '  height: '       + badgeRowH + 'px; overflow: hidden;' +
+        '  display: flex; align-items: center;' +
+        '  border: 1px solid transparent; line-height: 1.4;' +
+        '}' +
+        '.badge-warning   { background:#3a1a1a; border-color:#c0392b; color:#f0a8a8; }' +
+        '.badge-watch     { background:#2e2a1a; border-color:#d68910; color:#f0d08a; }' +
+        '.badge-advisory  { background:#3a3a1a; border-color:#b7950b; color:#e0d890; }' +
+        // Invisible spacer — same fixed height as a real badge, no visible content.
+        '.badge-placeholder {' +
+        '  background: transparent !important;' +
+        '  border-color: transparent !important;' +
+        '  color: transparent !important;' +
+        '  pointer-events: none;' +
+        '}'
+      : '') +
 
     // ── TODAY BODY (grid row 2, col 1) ──
     // Rounded bottom corners complete the visual column started by left-header.
@@ -1606,36 +1624,38 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     '  overflow: hidden; min-height: 0;' +
     '}' +
 
-    // Hourly weather strip.
-    '.wx-strip {' +
-    '  width: '      + WEATHER_STRIP_WIDTH + 'px; flex-shrink: 0;' +
-    '  background: #0f1e2e; border-right: 1px solid #1e3a5a;' +
-    '  display: flex; flex-direction: column;' +
-    '  overflow: hidden;' +
-    '  padding: '    + Math.floor(pad * 0.3) + 'px 0;' +
-    '}' +
-    '.wx-slot {' +
-    '  display: flex; flex-direction: column; align-items: center;' +
-    '  padding: '    + Math.floor(pad * 0.28) + 'px 0 ' + Math.floor(pad * 0.22) + 'px;' +
-    '  flex-shrink: 0;' +
-    '}' +
-    '.wx-time {' +
-    '  font-size: '  + wxTimeFont + 'px; color: #4a9eda;' +
-    '  font-weight: 700; line-height: 1; margin-bottom: 3px;' +
-    '}' +
-    '.wx-time.now-label { color: #f0a060; letter-spacing: 0.05em; }' +
-    '.wx-temp {' +
-    '  font-size: '  + wxTempFont + 'px; font-weight: 700;' +
-    '  color: #dde6f0; line-height: 1; margin-bottom: 2px;' +
-    '}' +
-    // .wx-emoji is now a container for an inline SVG — no font-size needed.
-    // display:flex + align-items:center keeps the SVG centered in the slot.
-    '.wx-emoji { display:flex; align-items:center; justify-content:center; }' +
-    '.wx-divider {' +
-    '  width: '      + Math.floor(WEATHER_STRIP_WIDTH * 0.6) + 'px;' +
-    '  border-top: 1px solid #1e3a5a;' +
-    '  margin-top: ' + Math.floor(pad * 0.22) + 'px;' +
-    '}' +
+    // Hourly weather strip — CSS omitted entirely when SHOW_WEATHER is false.
+    (SHOW_WEATHER
+      ? '.wx-strip {' +
+        '  width: '      + WEATHER_STRIP_WIDTH + 'px; flex-shrink: 0;' +
+        '  background: #0f1e2e; border-right: 1px solid #1e3a5a;' +
+        '  display: flex; flex-direction: column;' +
+        '  overflow: hidden;' +
+        '  padding: '    + Math.floor(pad * 0.3) + 'px 0;' +
+        '}' +
+        '.wx-slot {' +
+        '  display: flex; flex-direction: column; align-items: center;' +
+        '  padding: '    + Math.floor(pad * 0.28) + 'px 0 ' + Math.floor(pad * 0.22) + 'px;' +
+        '  flex-shrink: 0;' +
+        '}' +
+        '.wx-time {' +
+        '  font-size: '  + wxTimeFont + 'px; color: #4a9eda;' +
+        '  font-weight: 700; line-height: 1; margin-bottom: 3px;' +
+        '}' +
+        '.wx-time.now-label { color: #f0a060; letter-spacing: 0.05em; }' +
+        '.wx-temp {' +
+        '  font-size: '  + wxTempFont + 'px; font-weight: 700;' +
+        '  color: #dde6f0; line-height: 1; margin-bottom: 2px;' +
+        '}' +
+        // .wx-emoji is now a container for an inline SVG — no font-size needed.
+        // display:flex + align-items:center keeps the SVG centered in the slot.
+        '.wx-emoji { display:flex; align-items:center; justify-content:center; }' +
+        '.wx-divider {' +
+        '  width: '      + Math.floor(WEATHER_STRIP_WIDTH * 0.6) + 'px;' +
+        '  border-top: 1px solid #1e3a5a;' +
+        '  margin-top: ' + Math.floor(pad * 0.22) + 'px;' +
+        '}'
+      : '') +
 
     // Today events column.
     '.today-events {' +
@@ -1809,8 +1829,8 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
   const todayHeaderHtml = (
     '<div class="left-header">' +
       todayDateHtml +
-      buildWeatherRowsHtml(dailyWeatherMap[todayStr]) +
-      buildBadgeRowsHtml(todayStr) +
+      (SHOW_WEATHER ? buildWeatherRowsHtml(dailyWeatherMap[todayStr]) : '') +
+      (SHOW_WEATHER ? buildBadgeRowsHtml(todayStr) : '') +
     '</div>'
   );
 
@@ -1827,8 +1847,8 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     allColHeadersHtml += (
       '<div class="day-col-header">' +
         colDateHtml +
-        buildWeatherRowsHtml(dailyWeatherMap[dateStr]) +
-        buildBadgeRowsHtml(dateStr) +
+        (SHOW_WEATHER ? buildWeatherRowsHtml(dailyWeatherMap[dateStr]) : '') +
+        (SHOW_WEATHER ? buildBadgeRowsHtml(dateStr) : '') +
       '</div>'
     );
   }
@@ -1857,13 +1877,13 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
   // Today calendar events.
   const todayEvts  = getEventsForDate(events, todayStr);
   const todayAD    = sortAllDayEvents(todayEvts.filter(function(e) { return e.allDay; }));
-  
+
   // Exclude timed events whose end time (or start time if no end) has already passed.
-const todayTimed = todayEvts.filter(function(e) {
-  if (e.allDay) return false;
-  const cutoff = e.end || e.start;
-  return cutoff > now;
-}).sort(sortByStart);
+  const todayTimed = todayEvts.filter(function(e) {
+    if (e.allDay) return false;
+    const cutoff = e.end || e.start;
+    return cutoff > now;
+  }).sort(sortByStart);
 
   let todayEventsHtml = '';
   for (const e of todayAD) {
@@ -1944,6 +1964,7 @@ const todayTimed = todayEvts.filter(function(e) {
 
   return buildHtmlDoc(width, height, styles, body);
 }
+
 function buildStripLayout(events, displayDates, layout, layoutKey) {
   const { width, height } = layout;
 
