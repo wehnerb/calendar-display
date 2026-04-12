@@ -85,7 +85,7 @@ const CACHE_VERSION = 21;
 
 // Default layout when no ?layout= parameter is provided.
 // Options: ‘full’, ‘wide’, ‘split’, ‘tri’
-const DEFAULT_LAYOUT = ‘wide’;
+const DEFAULT_LAYOUT = 'wide';
 
 // Layout pixel dimensions — must match all other station Workers exactly.
 const LAYOUTS = {
