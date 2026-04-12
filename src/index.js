@@ -82,7 +82,7 @@ const CACHE_SECONDS = 900;
 // Increment this integer to immediately invalidate all cached pages.
 // Useful after configuration changes that affect the rendered output,
 // such as updating ALLDAY_COLORS, FILTER_EXACT, or DAYS_TO_SHOW.
-const CACHE_VERSION = 20;
+const CACHE_VERSION = 21;
 
 // Default layout when no ?layout= parameter is provided.
 // Options: 'full', 'wide', 'split', 'tri'
@@ -1490,8 +1490,10 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     '*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }' +
     'html, body {' +
     '  width: '  + width  + 'px; height: ' + height + 'px;' +
-    '  overflow: hidden; background: #0d1b2a; color: #dde6f0;' +
-    '  font-family: Arial, Helvetica, sans-serif;' +
+    // wide/split/tri: transparent so the display hardware charcoal texture shows
+    // through. full: solid dark background — the display fills the whole screen.
+    '  overflow: hidden; background: ' + (layoutKey === 'full' ? '#111111' : 'transparent') + '; color: rgba(255,255,255,0.92);' +
+    '  font-family: "Segoe UI", Arial, Helvetica, sans-serif;' +
     '}' +
 
     // Outer flex column — label (optional), alert strip (optional), panels grid.
@@ -1507,7 +1509,7 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
       ? '.cal-label {' +
         '  font-size: '     + labelFont + 'px; font-weight: 700;' +
         '  letter-spacing: 0.2em; text-transform: uppercase;' +
-        '  color: #5b9ecf; text-align: center;' +
+        '  color: rgba(255,255,255,0.75); text-align: center;' +
         '  height: '        + labelHeight + 'px;' +
         '  line-height: '   + labelHeight + 'px;' +
         '  flex-shrink: 0;' +
@@ -1527,9 +1529,9 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
         '  font-size: ' + alertBannerFont + 'px; font-weight: 700;' +
         '  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;' +
         '}' +
-        '.alert-warning  { background:#5c1a1a; border-left:4px solid #c0392b; color:#f0a8a8; }' +
-        '.alert-watch    { background:#4a2a0a; border-left:4px solid #d68910; color:#f0d08a; }' +
-        '.alert-advisory { background:#3a3a1a; border-left:4px solid #b7950b; color:#e0d890; }'
+        '.alert-warning  { background:rgba(50,0,0,0.55); border:1px solid rgba(255,255,255,0.10); border-left:4px solid #C8102E; color:#ffaaaa; }' +
+        '.alert-watch    { background:rgba(50,25,0,0.55); border:1px solid rgba(255,255,255,0.10); border-left:4px solid #d68910; color:#ffd08a; }' +
+        '.alert-advisory { background:rgba(40,40,0,0.55); border:1px solid rgba(255,255,255,0.10); border-left:4px solid #b7950b; color:#e0d890; }'
       : '') +
 
     // ── PANELS GRID ──
@@ -1548,10 +1550,10 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     // Rounded top corners; border-bottom separates from body below.
     // No height set — grid row auto-sizes to the tallest header across all columns.
     '.left-header {' +
-    '  background: #1a3a5c;' +
+    '  background: rgba(255,255,255,0.17);' +
     '  border-radius: 6px 6px 0 0;' +
     '  padding: '        + Math.floor(pad * 0.38) + 'px ' + Math.floor(pad * 0.45) + 'px;' +
-    '  border-bottom: 2px solid #2d5a8e;' +
+    '  border-bottom: 1px solid rgba(255,255,255,0.18);' +
     '  display: flex; flex-direction: column;' +
     '  gap: '            + hdrGap + 'px;' +
     '}' +
@@ -1559,10 +1561,10 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     // ── DAY COLUMN HEADERS (grid row 1, cols 2+) ──
     // Identical structure to today header; background differs.
     '.day-col-header {' +
-    '  background: #132338;' +
+    '  background: rgba(255,255,255,0.06);' +
     '  border-radius: 6px 6px 0 0;' +
     '  padding: '        + Math.floor(pad * 0.38) + 'px ' + Math.floor(pad * 0.35) + 'px;' +
-    '  border-bottom: 1px solid #1e3a5a;' +
+    '  border-bottom: 1px solid rgba(255,255,255,0.10);' +
     '  display: flex; flex-direction: column;' +
     '  gap: '            + hdrGap + 'px;' +
     '}' +
@@ -1573,23 +1575,20 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     '  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;' +
     '}' +
     '.hdr-date .today-label  { color: #ffffff; }' +
-    '.hdr-date .today-sep    { color: #5b9ecf; }' +
-    '.hdr-date .today-short  { color: #5b9ecf; }' +
-    '.hdr-date .col-date-text { color: #5b9ecf; }' +
+    '.hdr-date .today-sep    { color: rgba(255,255,255,0.55); }' +
+    '.hdr-date .today-short  { color: rgba(255,255,255,0.68); }' +
+    '.hdr-date .col-date-text { color: rgba(255,255,255,0.68); }' +
 
     // Shared weather rows — CSS omitted entirely when SHOW_WEATHER is false.
     (SHOW_WEATHER
-      ? '.hdr-hl { font-size: ' + colWxFont + 'px; font-weight: 700; color: #dde6f0; }' +
+      ? '.hdr-hl { font-size: ' + colWxFont + 'px; font-weight: 700; color: rgba(255,255,255,0.92); }' +
         '.hdr-hl .hi { color: #f0a060; }' +
         '.hdr-hl .lo { color: #80c8f0; }' +
-        // Condition text wraps freely — no line-clamp. The CSS grid row auto-sizes
-        // to the tallest header content, so all headers expand uniformly to match
-        // the column with the longest forecast text.
         '.hdr-cond {' +
-        '  font-size: '    + colWxFont + 'px; color: #a8d1f0;' +
+        '  font-size: '    + colWxFont + 'px; color: rgba(255,255,255,0.75);' +
         '  line-height: 1.4;' +
         '}' +
-        '.hdr-wind { font-size: ' + colWindFont + 'px; color: #7ab3d9; }'
+        '.hdr-wind { font-size: ' + colWindFont + 'px; color: rgba(255,255,255,0.55); }'
       : '') +
 
     // Future alert badge rows — CSS omitted entirely when SHOW_WEATHER is false.
@@ -1602,9 +1601,9 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
         '  display: flex; align-items: center;' +
         '  border: 1px solid transparent; line-height: 1.4;' +
         '}' +
-        '.badge-warning   { background:#3a1a1a; border-color:#c0392b; color:#f0a8a8; }' +
-        '.badge-watch     { background:#2e2a1a; border-color:#d68910; color:#f0d08a; }' +
-        '.badge-advisory  { background:#3a3a1a; border-color:#b7950b; color:#e0d890; }' +
+        '.badge-warning   { background:rgba(80,0,0,0.45); border-color:#C8102E; color:#ffaaaa; }' +
+        '.badge-watch     { background:rgba(70,40,0,0.45); border-color:#d68910; color:#ffd08a; }' +
+        '.badge-advisory  { background:rgba(50,50,0,0.45); border-color:#b7950b; color:#e0d890; }' +
         // Invisible spacer — same fixed height as a real badge, no visible content.
         '.badge-placeholder {' +
         '  background: transparent !important;' +
@@ -1618,7 +1617,7 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     // Rounded bottom corners complete the visual column started by left-header.
     // Horizontal flex: hourly weather strip (left) + events column (right).
     '.left-body {' +
-    '  background: #132338;' +
+    '  background: rgba(255,255,255,0.10);' +
     '  border-radius: 0 0 6px 6px;' +
     '  display: flex; flex-direction: row;' +
     '  overflow: hidden; min-height: 0;' +
@@ -1628,7 +1627,7 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     (SHOW_WEATHER
       ? '.wx-strip {' +
         '  width: '      + WEATHER_STRIP_WIDTH + 'px; flex-shrink: 0;' +
-        '  background: #0f1e2e; border-right: 1px solid #1e3a5a;' +
+        '  background: rgba(0,0,0,0.20); border-right: 1px solid rgba(255,255,255,0.10);' +
         '  display: flex; flex-direction: column;' +
         '  overflow: hidden;' +
         '  padding: '    + Math.floor(pad * 0.3) + 'px 0;' +
@@ -1639,20 +1638,20 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
         '  flex-shrink: 0;' +
         '}' +
         '.wx-time {' +
-        '  font-size: '  + wxTimeFont + 'px; color: #4a9eda;' +
+        '  font-size: '  + wxTimeFont + 'px; color: rgba(255,255,255,0.65);' +
         '  font-weight: 700; line-height: 1; margin-bottom: 3px;' +
         '}' +
         '.wx-time.now-label { color: #f0a060; letter-spacing: 0.05em; }' +
         '.wx-temp {' +
         '  font-size: '  + wxTempFont + 'px; font-weight: 700;' +
-        '  color: #dde6f0; line-height: 1; margin-bottom: 2px;' +
+        '  color: rgba(255,255,255,0.92); line-height: 1; margin-bottom: 2px;' +
         '}' +
         // .wx-emoji is now a container for an inline SVG — no font-size needed.
         // display:flex + align-items:center keeps the SVG centered in the slot.
         '.wx-emoji { display:flex; align-items:center; justify-content:center; }' +
         '.wx-divider {' +
         '  width: '      + Math.floor(WEATHER_STRIP_WIDTH * 0.6) + 'px;' +
-        '  border-top: 1px solid #1e3a5a;' +
+        '  border-top: 1px solid rgba(255,255,255,0.10);' +
         '  margin-top: ' + Math.floor(pad * 0.22) + 'px;' +
         '}'
       : '') +
@@ -1666,10 +1665,10 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
 
     // All-day shift color banners — shared by today and day column bodies.
     '.allday-banner {' +
-    '  background: #1e4d7a; border-left: 3px solid #4a9eda; border-radius: 3px;' +
+    '  background: rgba(255,255,255,0.12); border-left: 3px solid rgba(255,255,255,0.35); border-radius: 3px;' +
     '  padding: '       + Math.floor(pad * 0.25) + 'px ' + Math.floor(pad * 0.45) + 'px;' +
     '  margin-bottom: ' + Math.floor(pad * 0.28) + 'px;' +
-    '  font-size: '     + bannerFont + 'px; color: #a8d1f0;' +
+    '  font-size: '     + bannerFont + 'px; color: rgba(255,255,255,0.88);' +
     '  overflow: hidden;' + // Change to 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;' to suppress wrapping
     '}' +
 
@@ -1677,41 +1676,41 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     '.today-event {' +
     '  margin-bottom: '  + Math.floor(pad * 0.42) + 'px;' +
     '  padding-bottom: ' + Math.floor(pad * 0.32) + 'px;' +
-    '  border-bottom: 1px solid #1a3050; flex-shrink: 0;' +
+    '  border-bottom: 1px solid rgba(255,255,255,0.10); flex-shrink: 0;' +
     '}' +
     '.today-event:last-child { border-bottom: none; margin-bottom: 0; }' +
     '.today-evt-time {' +
     '  font-size: '  + evtTimeFont + 'px; font-weight: 700;' +
-    '  color: #4a9eda; line-height: 1.2;' +
+    '  color: rgba(255,255,255,0.65); line-height: 1.2;' +
     '}' +
     '.today-evt-title {' +
-    '  font-size: '  + evtTitleFont + 'px; font-weight: 600; color: #dde6f0;' +
+    '  font-size: '  + evtTitleFont + 'px; font-weight: 600; color: rgba(255,255,255,0.92);' +
     '  line-height: 1.3;' +
     '  overflow: hidden;' + // Change to 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;' to suppress wrapping
     '}' +
     '.today-evt-loc {' +
-    '  font-size: '  + evtLocFont + 'px; color: #7ab3d9; margin-top: 1px;' +
+    '  font-size: '  + evtLocFont + 'px; color: rgba(255,255,255,0.55); margin-top: 1px;' +
     '  overflow: hidden;' + // Change to 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;' to suppress wrapping
     '}' +
 
     // ── DAY COLUMN BODIES (grid row 2, cols 2+) ──
     // Rounded bottom corners complete the visual column started by day-col-header.
     '.day-col-body {' +
-    '  background: #0f1e2e;' +
+    '  background: rgba(255,255,255,0.03);' +
     '  border-radius: 0 0 6px 6px;' +
     '  overflow: hidden; min-height: 0;' +
     '  padding: ' + Math.floor(pad * 0.32) + 'px;' +
     '}' +
     '.day-event { margin-bottom: ' + Math.floor(pad * 0.30) + 'px; }' +
     '.day-time {' +
-    '  font-size: ' + dayTimeFont + 'px; color: #4a9eda; font-weight: 600;' +
+    '  font-size: ' + dayTimeFont + 'px; color: rgba(255,255,255,0.65); font-weight: 600;' +
     '}' +
     '.day-title {' +
-    '  font-size: ' + dayTitleFont + 'px; color: #c8dae8;' +
+    '  font-size: ' + dayTitleFont + 'px; color: rgba(255,255,255,0.85);' +
     '  overflow: hidden;' + // Change to 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;' to suppress wrapping
     '}' +
     '.no-events {' +
-    '  font-size: ' + noEventsFont + 'px; color: #3d5a73; font-style: italic;' +
+    '  font-size: ' + noEventsFont + 'px; color: rgba(255,255,255,0.35); font-style: italic;' +
     '}'
   );
 
@@ -1982,8 +1981,8 @@ function buildStripLayout(events, displayDates, layout, layoutKey) {
     '*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }' +
     'html, body {' +
     '  width: '  + width  + 'px; height: ' + height + 'px;' +
-    '  overflow: hidden; background: #0d1b2a; color: #dde6f0;' +
-    '  font-family: Arial, Helvetica, sans-serif;' +
+    '  overflow: hidden; background: transparent; color: rgba(255,255,255,0.92);' +
+    '  font-family: "Segoe UI", Arial, Helvetica, sans-serif;' +
     '}' +
     '.strip {' +
     '  width: '   + width  + 'px; height: ' + height + 'px;' +
@@ -2003,8 +2002,8 @@ function buildStripLayout(events, displayDates, layout, layoutKey) {
     '  width: '        + dateColWidth + 'px; flex-shrink: 0;' +
     '  padding-right: ' + Math.floor(pad * 0.5) + 'px;' +
     '  padding-top: '   + Math.floor(pad * 0.05) + 'px;' +
-    '  border-right: 2px solid #1e3a5a;' +
-    '  font-size: '    + dayHeadFont + 'px; font-weight: 700; color: #5b9ecf;' +
+    '  border-right: 2px solid rgba(255,255,255,0.10);' +
+    '  font-size: '    + dayHeadFont + 'px; font-weight: 700; color: rgba(255,255,255,0.68);' +
     '  line-height: 1.3;' +
     '}' +
 
@@ -2016,10 +2015,10 @@ function buildStripLayout(events, displayDates, layout, layoutKey) {
     '}' +
 
     '.allday-banner {' +
-    '  background: #1e4d7a; border-left: 3px solid #4a9eda; border-radius: 3px;' +
+    '  background: rgba(255,255,255,0.12); border-left: 3px solid rgba(255,255,255,0.35); border-radius: 3px;' +
     '  padding: '       + Math.floor(pad * 0.18) + 'px ' + Math.floor(pad * 0.4) + 'px;' +
     '  margin-bottom: ' + Math.floor(pad * 0.14) + 'px;' +
-    '  font-size: '     + bannerFont + 'px; color: #a8d1f0;' +
+    '  font-size: '     + bannerFont + 'px; color: rgba(255,255,255,0.88);' +
     '  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;' +
     '  flex-shrink: 0;' +
     '}' +
@@ -2030,15 +2029,15 @@ function buildStripLayout(events, displayDates, layout, layoutKey) {
     '}' +
     '.event-time {' +
     '  width: '         + timeColWidth + 'px; flex-shrink: 0;' +
-    '  font-size: '     + timeFont + 'px; color: #4a9eda; font-weight: 600;' +
+    '  font-size: '     + timeFont + 'px; color: rgba(255,255,255,0.65); font-weight: 600;' +
     '}' +
     '.event-title {' +
     '  flex: 1; min-width: 0;' +
-    '  font-size: '     + titleFont + 'px; color: #c8dae8;' +
+    '  font-size: '     + titleFont + 'px; color: rgba(255,255,255,0.85);' +
     '  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;' +
     '}' +
     '.no-events {' +
-    '  font-size: '     + noEventsFont + 'px; color: #3d5a73; font-style: italic;' +
+    '  font-size: '     + noEventsFont + 'px; color: rgba(255,255,255,0.35); font-style: italic;' +
     '}'
   );
 
@@ -2139,8 +2138,8 @@ function renderErrorPage(message, layout) {
     'html, body {' +
     '  width: '    + width  + 'px; height: ' + height + 'px;' +
     '  margin: 0; padding: 0; overflow: hidden;' +
-    '  background: #0d1b2a; color: #5b9ecf;' +
-    '  font-family: Arial, Helvetica, sans-serif;' +
+    '  background: transparent; color: rgba(255,255,255,0.68);' +
+    '  font-family: "Segoe UI", Arial, Helvetica, sans-serif;' +
     '  font-size: ' + fontSize + 'px;' +
     '  display: flex; align-items: center; justify-content: center;' +
     '  text-align: center;' +
