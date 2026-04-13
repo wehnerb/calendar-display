@@ -99,6 +99,11 @@ const LAYOUTS = {
 // How long the error/retry page waits before reloading (seconds).
 const ERROR_RETRY_SECONDS = 60;
 
+// Background color used when ?bg=dark is set.
+// Matches the probationary-firefighter-display dark testing background.
+// Useful for evaluating layout and text contrast without the display hardware.
+const DARK_BG_COLOR = '#111111';
+
 // Event titles to exclude when they match EXACTLY (full string, case-insensitive).
 // Use for titles that could appear as substrings in legitimate event names.
 // Example: 'A Shift' will NOT filter 'A Shift Overtime' — add both if needed.
@@ -186,6 +191,10 @@ export default {
     const layoutKey   = (layoutParam in LAYOUTS) ? layoutParam : DEFAULT_LAYOUT;
     const layout      = LAYOUTS[layoutKey];
 
+    // ?bg=dark renders with a solid dark background for browser-based testing.
+    // Matches the probationary-firefighter-display ?bg=dark parameter behaviour.
+    const darkBg = sanitizeParam(url.searchParams.get('bg')) === 'dark';
+
     // wide/full → split view with weather.  split/tri → upcoming strip, no weather.
     const useStrip = (layoutKey === 'split' || layoutKey === 'tri');
 
@@ -193,6 +202,8 @@ export default {
     // Each layout variant is cached separately using a versioned cache key.
     // CACHE_VERSION allows instant cache invalidation by incrementing the
     // constant above — no Cloudflare dashboard action required.
+    // ?bg=dark requests bypass the cache entirely — they are for testing only
+    // and should not pollute the production cache or receive stale pages.
     const cache    = caches.default;
     const cacheKey = new Request(
       'https://calendar-display-cache.internal/v' + CACHE_VERSION +
@@ -200,10 +211,12 @@ export default {
       { method: 'GET' }
     );
 
-    // Return the cached response immediately if one exists.
-    const cachedResponse = await cache.match(cacheKey);
-    if (cachedResponse) {
-      return cachedResponse;
+    // Return the cached response immediately if one exists (skip when ?bg=dark).
+    if (!darkBg) {
+      const cachedResponse = await cache.match(cacheKey);
+      if (cachedResponse) {
+        return cachedResponse;
+      }
     }
 
     try {
@@ -244,7 +257,8 @@ export default {
       if (!icsText) {
         return renderErrorPage(
           'Calendar data could not be loaded. Retrying shortly.',
-          layout
+          layout,
+          darkBg
         );
       }
 
@@ -260,40 +274,33 @@ export default {
 
       // Render the appropriate layout design.
       const html = useStrip
-        ? buildStripLayout(events, displayDates, layout, layoutKey)
+        ? buildStripLayout(events, displayDates, layout, layoutKey, darkBg)
         : buildSplitLayout(
             events, displayDates, layout, layoutKey,
-            dailyPeriods, hourlyPeriods, alertFeatures
+            dailyPeriods, hourlyPeriods, alertFeatures, darkBg
           );
 
       const response = new Response(html, {
         status: 200,
         headers: {
           'Content-Type':           'text/html; charset=utf-8',
-          // no-store prevents the browser from caching the HTML page itself.
-          // The meta-refresh interval controls how often the display reloads.
           'Cache-Control':          'no-store',
-          // Prevent MIME-type sniffing attacks.
           'X-Content-Type-Options': 'nosniff',
-          // NOTE: X-Frame-Options is intentionally NOT set here.
-          // This Worker is loaded as a full-screen iframe by the display system.
-          // Adding X-Frame-Options: SAMEORIGIN causes immediate white screens.
         },
       });
 
-      // Store the rendered response in the Workers Cache API.
-      // A separate cache-control header on the cloned response tells
-      // Cloudflare's cache how long to keep it — this does not affect
-      // the Cache-Control header returned to the display browser.
-      const responseToCache = new Response(html, {
-        status: 200,
-        headers: {
-          'Content-Type':           'text/html; charset=utf-8',
-          'Cache-Control':          'public, max-age=' + CACHE_SECONDS,
-          'X-Content-Type-Options': 'nosniff',
-        },
-      });
-      await cache.put(cacheKey, responseToCache);
+      // Only write to the Workers Cache when not in dark-bg testing mode.
+      if (!darkBg) {
+        const responseToCache = new Response(html, {
+          status: 200,
+          headers: {
+            'Content-Type':           'text/html; charset=utf-8',
+            'Cache-Control':          'public, max-age=' + CACHE_SECONDS,
+            'X-Content-Type-Options': 'nosniff',
+          },
+        });
+        await cache.put(cacheKey, responseToCache);
+      }
 
       return response;
 
@@ -301,7 +308,7 @@ export default {
       // Log full detail server-side; return only a generic message to the
       // display browser to avoid leaking implementation details.
       console.error('Worker unhandled error:', err);
-      return renderErrorPage('A system error occurred. Retrying shortly.', layout);
+      return renderErrorPage('A system error occurred. Retrying shortly.', layout, darkBg);
     }
   },
 };
@@ -1337,7 +1344,7 @@ function buildHtmlDoc(width, height, styles, body) {
 // Today's header uses the same row structure and font sizes as the day column
 // headers so both panels are always the same header height.
 
-function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods, hourlyPeriods, alertFeatures) {
+function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods, hourlyPeriods, alertFeatures, darkBg) {
   const { width, height } = layout;
   const now      = new Date();
   const todayStr = displayDates[0];
@@ -1492,11 +1499,7 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     '  width: '  + width  + 'px; height: ' + height + 'px;' +
     // wide/split/tri: transparent so the display hardware charcoal texture shows
     // through. full: solid dark background — the display fills the whole screen.
-    '  overflow: hidden; background: ' + (layoutKey === 'full' ? '#111111' : 'transparent') + '; color: rgba(255,255,255,0.92);' +
-    '  font-family: "Segoe UI", Arial, Helvetica, sans-serif;' +
-    '}' +
-
-    // Outer flex column — label (optional), alert strip (optional), panels grid.
+    '  overflow: hidden; background: ' + (darkBg || layoutKey === 'full' ? DARK_BG_COLOR : 'transparent') + '; color: rgba(255,255,255,0.92);' +
     '.outer {' +
     '  width: '  + width  + 'px; height: ' + height + 'px;' +
     '  padding: ' + pad + 'px;' +
@@ -1964,7 +1967,7 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
   return buildHtmlDoc(width, height, styles, body);
 }
 
-function buildStripLayout(events, displayDates, layout, layoutKey) {
+function buildStripLayout(events, displayDates, layout, layoutKey, darkBg) {
   const { width, height } = layout;
 
   const pad          = Math.floor(height * 0.030);
@@ -1981,7 +1984,7 @@ function buildStripLayout(events, displayDates, layout, layoutKey) {
     '*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }' +
     'html, body {' +
     '  width: '  + width  + 'px; height: ' + height + 'px;' +
-    '  overflow: hidden; background: transparent; color: rgba(255,255,255,0.92);' +
+    '  overflow: hidden; background: ' + (darkBg || layoutKey === 'full' ? DARK_BG_COLOR : 'transparent') + '; color: rgba(255,255,255,0.92);' +
     '  font-family: "Segoe UI", Arial, Helvetica, sans-serif;' +
     '}' +
     '.strip {' +
@@ -2123,7 +2126,7 @@ function sortByStart(a, b) {
 // ERROR PAGE
 // =============================================================================
 
-function renderErrorPage(message, layout) {
+function renderErrorPage(message, layout, darkBg) {
   const { width, height } = layout;
   const fontSize = Math.floor(Math.min(width, height) * 0.022);
 
@@ -2138,7 +2141,7 @@ function renderErrorPage(message, layout) {
     'html, body {' +
     '  width: '    + width  + 'px; height: ' + height + 'px;' +
     '  margin: 0; padding: 0; overflow: hidden;' +
-    '  background: transparent; color: rgba(255,255,255,0.68);' +
+    '  background: ' + (darkBg ? DARK_BG_COLOR : 'transparent') + '; color: rgba(255,255,255,0.68);' +
     '  font-family: "Segoe UI", Arial, Helvetica, sans-serif;' +
     '  font-size: ' + fontSize + 'px;' +
     '  display: flex; align-items: center; justify-content: center;' +
