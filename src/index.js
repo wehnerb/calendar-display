@@ -82,7 +82,7 @@ const CACHE_SECONDS = 900;
 // Increment this integer to immediately invalidate all cached pages.
 // Useful after configuration changes that affect the rendered output,
 // such as updating ALLDAY_COLORS, FILTER_EXACT, or DAYS_TO_SHOW.
-const CACHE_VERSION = 21;
+const CACHE_VERSION = 22;
 
 // Default layout when no ?layout= parameter is provided.
 // Options: 'full', 'wide', 'split', 'tri'
@@ -772,11 +772,15 @@ function getConditionColor(shortForecast) {
     '<line x1="6"  y1="20" x2="18" y2="20" stroke="#b0c4d4" stroke-width="2"   stroke-linecap="round"/>' +
     close;
 
-  // Wind: three curved horizontal lines.
+  // Wind: three horizontal lines of decreasing length with curled ends,
+  // suggesting airflow. Replaces the previous curved streamlines design.
   self.WX_SVG_WIND = open +
-    '<path d="M2 8 Q10 8 14 4 a4 4 0 0 1 4 4 a4 4 0 0 1-4 4 H2" fill="none" stroke="#b0c4d4" stroke-width="2" stroke-linecap="round"/>' +
-    '<path d="M2 14 Q8 14 11 11 a3 3 0 0 1 3 3 a3 3 0 0 1-3 3 H2" fill="none" stroke="#b0c4d4" stroke-width="2" stroke-linecap="round"/>' +
-    '<line x1="2" y1="19" x2="16" y2="19" stroke="#b0c4d4" stroke-width="2" stroke-linecap="round"/>' +
+    '<line x1="3"  y1="6"  x2="16" y2="6"  stroke="#b0c4d4" stroke-width="2" stroke-linecap="round"/>' +
+    '<line x1="3"  y1="12" x2="21" y2="12" stroke="#b0c4d4" stroke-width="2" stroke-linecap="round"/>' +
+    '<line x1="3"  y1="18" x2="13" y2="18" stroke="#b0c4d4" stroke-width="2" stroke-linecap="round"/>' +
+    '<path d="M16 3 a3 3 0 0 1 3 3 a3 3 0 0 1-3 3" fill="none" stroke="#b0c4d4" stroke-width="2" stroke-linecap="round"/>' +
+    '<path d="M21 9 a3 3 0 0 1 0 6" fill="none" stroke="#b0c4d4" stroke-width="2" stroke-linecap="round"/>' +
+    '<path d="M13 15 a3 3 0 0 1 3 3 a3 3 0 0 1-3 3" fill="none" stroke="#b0c4d4" stroke-width="2" stroke-linecap="round"/>' +
     close;
 
   // Thunderstorm: dark cloud + lightning bolt.
