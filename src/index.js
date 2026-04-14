@@ -309,7 +309,7 @@ export default {
       // Log full detail server-side; return only a generic message to the
       // display browser to avoid leaking implementation details.
       console.error('Worker unhandled error:', err);
-      return renderErrorPage('SYSTEM ERROR', 'Retrying shortly', layout, darkBg);
+      return renderErrorPage('CALENDAR UNAVAILABLE', 'Retrying shortly', layout, darkBg);
     }
   },
 };
