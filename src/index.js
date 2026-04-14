@@ -256,7 +256,8 @@ export default {
 
       if (!icsText) {
         return renderErrorPage(
-          'Calendar data could not be loaded. Retrying shortly.',
+          'CALENDAR UNAVAILABLE',
+          'Retrying shortly',
           layout,
           darkBg
         );
@@ -308,7 +309,7 @@ export default {
       // Log full detail server-side; return only a generic message to the
       // display browser to avoid leaking implementation details.
       console.error('Worker unhandled error:', err);
-      return renderErrorPage('A system error occurred. Retrying shortly.', layout, darkBg);
+      return renderErrorPage('SYSTEM ERROR', 'Retrying shortly', layout, darkBg);
     }
   },
 };
@@ -2126,9 +2127,10 @@ function sortByStart(a, b) {
 // ERROR PAGE
 // =============================================================================
 
-function renderErrorPage(message, layout, darkBg) {
+function renderErrorPage(title, subtitle, layout, darkBg) {
   const { width, height } = layout;
-  const fontSize = Math.floor(Math.min(width, height) * 0.022);
+  const titleFont = Math.floor(Math.min(width, height) * 0.030);
+  const subFont   = Math.floor(Math.min(width, height) * 0.020);
 
   return new Response(
     '<!DOCTYPE html>' +
@@ -2138,18 +2140,25 @@ function renderErrorPage(message, layout, darkBg) {
     '<meta http-equiv="refresh" content="' + ERROR_RETRY_SECONDS + '">' +
     '<title>FFD Calendar</title>' +
     '<style>' +
+    '*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }' +
     'html, body {' +
-    '  width: '    + width  + 'px; height: ' + height + 'px;' +
-    '  margin: 0; padding: 0; overflow: hidden;' +
-    '  background: ' + (darkBg ? DARK_BG_COLOR : 'transparent') + '; color: rgba(255,255,255,0.68);' +
+    '  width: ' + width + 'px; height: ' + height + 'px;' +
+    '  overflow: hidden;' +
+    '  background: ' + (darkBg ? DARK_BG_COLOR : 'transparent') + ';' +
     '  font-family: "Segoe UI", Arial, Helvetica, sans-serif;' +
-    '  font-size: ' + fontSize + 'px;' +
     '  display: flex; align-items: center; justify-content: center;' +
-    '  text-align: center;' +
     '}' +
+    '.err-wrap { display: flex; flex-direction: column; align-items: center; gap: ' + Math.floor(subFont * 0.6) + 'px; text-align: center; }' +
+    '.err-title { font-size: ' + titleFont + 'px; font-weight: 700; color: rgba(255,255,255,0.92); letter-spacing: 0.06em; }' +
+    '.err-sub   { font-size: ' + subFont   + 'px; color: rgba(255,255,255,0.55); }' +
     '</style>' +
     '</head>' +
-    '<body>' + escapeHtml(message) + '</body>' +
+    '<body>' +
+    '<div class="err-wrap">' +
+    '<div class="err-title">' + escapeHtml(title)    + '</div>' +
+    '<div class="err-sub">'   + escapeHtml(subtitle) + '</div>' +
+    '</div>' +
+    '</body>' +
     '</html>',
     {
       status: 200,
