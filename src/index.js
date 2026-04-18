@@ -1505,6 +1505,7 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     // wide/split/tri: transparent so the display hardware charcoal texture shows
     // through. full: solid dark background — the display fills the whole screen.
     '  overflow: hidden; background: ' + (darkBg || layoutKey === 'full' ? DARK_BG_COLOR : 'transparent') + '; color: rgba(255,255,255,0.92);' +
+    '}' +
     '.outer {' +
     '  width: '  + width  + 'px; height: ' + height + 'px;' +
     '  padding: ' + pad + 'px;' +
