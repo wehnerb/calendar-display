@@ -1,4 +1,8 @@
 import { fetchWithTimeout } from './shared/fetch-helpers.js';
+import { escapeHtml, sanitizeParam } from './shared/html.js';
+import { DARK_BG_COLOR, FONT_STACK, ACCENT_COLOR, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_TERTIARY, BORDER_SUBTLE, BORDER_STRONG, CARD_BASE, CARD_ELEVATED, CARD_HEADER, CARD_RECESSED } from './shared/colors.js';
+import { LAYOUTS } from './shared/layouts.js';
+import { ALERT_WARNING_BG, ALERT_WARNING_BORDER, ALERT_WARNING_TEXT, ALERT_WATCH_BG, ALERT_WATCH_BORDER, ALERT_WATCH_TEXT, ALERT_ADVISORY_BG, ALERT_ADVISORY_BORDER, ALERT_ADVISORY_TEXT } from './shared/alert-colors.js';
 
 // =============================================================================
 // calendar-display — Cloudflare Worker
@@ -97,21 +101,8 @@ const CACHE_VERSION = 22;
 // Options: 'full', 'wide', 'split', 'tri'
 const DEFAULT_LAYOUT = 'wide';
 
-// Layout pixel dimensions — must match all other station Workers exactly.
-const LAYOUTS = {
-  full:  { width: 1920, height: 1075 },
-  wide:  { width: 1735, height: 720  },
-  split: { width: 852,  height: 720  },
-  tri:   { width: 558,  height: 720  },
-};
-
 // How long the error/retry page waits before reloading (seconds).
 const ERROR_RETRY_SECONDS = 60;
-
-// Background color used when ?bg=dark is set.
-// Matches the probationary-firefighter-display dark testing background.
-// Useful for evaluating layout and text contrast without the display hardware.
-const DARK_BG_COLOR = '#111111';
 
 // Event titles to exclude when they match EXACTLY (full string, case-insensitive).
 // Use for titles that could appear as substrings in legitimate event names.
@@ -1315,29 +1306,6 @@ function getAllDayBannerStyle(summary) {
 
 
 // =============================================================================
-// INPUT HELPERS
-// =============================================================================
-
-// Sanitizes a URL parameter value to prevent injection attacks.
-// Allows only alphanumeric characters, hyphens, and underscores.
-function sanitizeParam(value) {
-  if (!value || typeof value !== 'string') return null;
-  return value.replace(/[^a-zA-Z0-9_-]/g, '').substring(0, 50);
-}
-
-// Escapes a string for safe insertion into HTML content to prevent XSS.
-function escapeHtml(str) {
-  if (!str) return '';
-  return String(str)
-    .replace(/&/g,  '&amp;')
-    .replace(/</g,  '&lt;')
-    .replace(/>/g,  '&gt;')
-    .replace(/"/g,  '&quot;')
-    .replace(/'/g,  '&#39;');
-}
-
-
-// =============================================================================
 // SHARED HTML WRAPPER
 // =============================================================================
 
@@ -1530,7 +1498,7 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     '  width: '  + width  + 'px; height: ' + height + 'px;' +
     // wide/split/tri: transparent so the display hardware charcoal texture shows
     // through. full: solid dark background — the display fills the whole screen.
-    '  overflow: hidden; background: ' + (darkBg || layoutKey === 'full' ? DARK_BG_COLOR : 'transparent') + '; color: rgba(255,255,255,0.92);' +
+    '  overflow: hidden; background: ' + (darkBg || layoutKey === 'full' ? DARK_BG_COLOR : 'transparent') + '; color: ' + TEXT_PRIMARY + ';' +
     '}' +
     '.outer {' +
     '  width: '  + width  + 'px; height: ' + height + 'px;' +
@@ -1564,9 +1532,9 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
         '  font-size: ' + alertBannerFont + 'px; font-weight: 700;' +
         '  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;' +
         '}' +
-        '.alert-warning  { background:rgba(50,0,0,0.55); border:1px solid rgba(255,255,255,0.10); border-left:4px solid #C8102E; color:#ffaaaa; }' +
-        '.alert-watch    { background:rgba(50,25,0,0.55); border:1px solid rgba(255,255,255,0.10); border-left:4px solid #d68910; color:#ffd08a; }' +
-        '.alert-advisory { background:rgba(40,40,0,0.55); border:1px solid rgba(255,255,255,0.10); border-left:4px solid #b7950b; color:#e0d890; }'
+        '.alert-warning  { background:' + ALERT_WARNING_BG + '; border:1px solid ' + BORDER_SUBTLE + '; border-left:4px solid ' + ALERT_WARNING_BORDER + '; color:' + ALERT_WARNING_TEXT + '; }' +
+        '.alert-watch    { background:' + ALERT_WATCH_BG + '; border:1px solid ' + BORDER_SUBTLE + '; border-left:4px solid ' + ALERT_WATCH_BORDER + '; color:' + ALERT_WATCH_TEXT + '; }' +
+        '.alert-advisory { background:' + ALERT_ADVISORY_BG + '; border:1px solid ' + BORDER_SUBTLE + '; border-left:4px solid ' + ALERT_ADVISORY_BORDER + '; color:' + ALERT_ADVISORY_TEXT + '; }'
       : '') +
 
     // ── PANELS GRID ──
@@ -1585,10 +1553,10 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     // Rounded top corners; border-bottom separates from body below.
     // No height set — grid row auto-sizes to the tallest header across all columns.
     '.left-header {' +
-    '  background: rgba(255,255,255,0.17);' +
+    '  background: ' + CARD_HEADER + ';' +
     '  border-radius: 6px 6px 0 0;' +
     '  padding: '        + Math.floor(pad * 0.38) + 'px ' + Math.floor(pad * 0.45) + 'px;' +
-    '  border-bottom: 1px solid rgba(255,255,255,0.18);' +
+    '  border-bottom: 1px solid ' + BORDER_STRONG + ';' +
     '  display: flex; flex-direction: column;' +
     '  gap: '            + hdrGap + 'px;' +
     '}' +
@@ -1596,10 +1564,10 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     // ── DAY COLUMN HEADERS (grid row 1, cols 2+) ──
     // Identical structure to today header; background differs.
     '.day-col-header {' +
-    '  background: rgba(255,255,255,0.06);' +
+    '  background: ' + CARD_BASE + ';' +
     '  border-radius: 6px 6px 0 0;' +
     '  padding: '        + Math.floor(pad * 0.38) + 'px ' + Math.floor(pad * 0.35) + 'px;' +
-    '  border-bottom: 1px solid rgba(255,255,255,0.10);' +
+    '  border-bottom: 1px solid ' + BORDER_SUBTLE + ';' +
     '  display: flex; flex-direction: column;' +
     '  gap: '            + hdrGap + 'px;' +
     '}' +
@@ -1610,20 +1578,20 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     '  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;' +
     '}' +
     '.hdr-date .today-label  { color: #ffffff; }' +
-    '.hdr-date .today-sep    { color: rgba(255,255,255,0.92); }' +
-    '.hdr-date .today-short  { color: rgba(255,255,255,0.68); }' +
-    '.hdr-date .col-date-text { color: rgba(255,255,255,0.68); }' +
+    '.hdr-date .today-sep    { color: ' + TEXT_PRIMARY + '; }' +
+    '.hdr-date .today-short  { color: ' + TEXT_SECONDARY + '; }' +
+    '.hdr-date .col-date-text { color: ' + TEXT_SECONDARY + '; }' +
 
     // Shared weather rows — CSS omitted entirely when SHOW_WEATHER is false.
     (SHOW_WEATHER
-      ? '.hdr-hl { font-size: ' + colWxFont + 'px; font-weight: 700; color: rgba(255,255,255,0.92); }' +
+      ? '.hdr-hl { font-size: ' + colWxFont + 'px; font-weight: 700; color: ' + TEXT_PRIMARY + '; }' +
         '.hdr-hl .hi { color: #f0a060; }' +
         '.hdr-hl .lo { color: #80c8f0; }' +
         '.hdr-cond {' +
         '  font-size: '    + colWxFont + 'px; color: rgba(255,255,255,0.75);' +
         '  line-height: 1.4;' +
         '}' +
-        '.hdr-wind { font-size: ' + colWindFont + 'px; color: rgba(255,255,255,0.92); }'
+        '.hdr-wind { font-size: ' + colWindFont + 'px; color: ' + TEXT_PRIMARY + '; }'
       : '') +
 
     // Future alert badge rows — CSS omitted entirely when SHOW_WEATHER is false.
@@ -1636,9 +1604,9 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
         '  display: flex; align-items: center;' +
         '  border: 1px solid transparent; line-height: 1.4;' +
         '}' +
-        '.badge-warning   { background:rgba(80,0,0,0.45); border-color:#C8102E; color:#ffaaaa; }' +
-        '.badge-watch     { background:rgba(70,40,0,0.45); border-color:#d68910; color:#ffd08a; }' +
-        '.badge-advisory  { background:rgba(50,50,0,0.45); border-color:#b7950b; color:#e0d890; }' +
+        '.badge-warning   { background:rgba(80,0,0,0.45); border-color:' + ALERT_WARNING_BORDER + '; color:' + ALERT_WARNING_TEXT + '; }' +
+        '.badge-watch     { background:rgba(70,40,0,0.45); border-color:' + ALERT_WATCH_BORDER + '; color:' + ALERT_WATCH_TEXT + '; }' +
+        '.badge-advisory  { background:rgba(50,50,0,0.45); border-color:' + ALERT_ADVISORY_BORDER + '; color:' + ALERT_ADVISORY_TEXT + '; }' +
         // Invisible spacer — same fixed height as a real badge, no visible content.
         '.badge-placeholder {' +
         '  background: transparent !important;' +
@@ -1652,7 +1620,7 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     // Rounded bottom corners complete the visual column started by left-header.
     // Horizontal flex: hourly weather strip (left) + events column (right).
     '.left-body {' +
-    '  background: rgba(255,255,255,0.10);' +
+    '  background: ' + CARD_ELEVATED + ';' +
     '  border-radius: 0 0 6px 6px;' +
     '  display: flex; flex-direction: row;' +
     '  overflow: hidden; min-height: 0;' +
@@ -1662,7 +1630,7 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     (SHOW_WEATHER
       ? '.wx-strip {' +
         '  width: '      + WEATHER_STRIP_WIDTH + 'px; flex-shrink: 0;' +
-        '  background: rgba(0,0,0,0.20); border-right: 1px solid rgba(255,255,255,0.10);' +
+        '  background: rgba(0,0,0,0.20); border-right: 1px solid ' + BORDER_SUBTLE + ';' +
         '  display: flex; flex-direction: column;' +
         '  overflow: hidden;' +
         '  padding: '    + Math.floor(pad * 0.3) + 'px 0;' +
@@ -1679,14 +1647,14 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
         '.wx-time.now-label { color: #f0a060; letter-spacing: 0.05em; }' +
         '.wx-temp {' +
         '  font-size: '  + wxTempFont + 'px; font-weight: 700;' +
-        '  color: rgba(255,255,255,0.92); line-height: 1; margin-bottom: 2px;' +
+        '  color: ' + TEXT_PRIMARY + '; line-height: 1; margin-bottom: 2px;' +
         '}' +
         // .wx-emoji is now a container for an inline SVG — no font-size needed.
         // display:flex + align-items:center keeps the SVG centered in the slot.
         '.wx-emoji { display:flex; align-items:center; justify-content:center; }' +
         '.wx-divider {' +
         '  width: '      + Math.floor(WEATHER_STRIP_WIDTH * 0.6) + 'px;' +
-        '  border-top: 1px solid rgba(255,255,255,0.10);' +
+        '  border-top: 1px solid ' + BORDER_SUBTLE + ';' +
         '  margin-top: ' + Math.floor(pad * 0.22) + 'px;' +
         '}'
       : '') +
@@ -1711,7 +1679,7 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     '.today-event {' +
     '  margin-bottom: '  + Math.floor(pad * 0.42) + 'px;' +
     '  padding-bottom: ' + Math.floor(pad * 0.32) + 'px;' +
-    '  border-bottom: 1px solid rgba(255,255,255,0.10); flex-shrink: 0;' +
+    '  border-bottom: 1px solid ' + BORDER_SUBTLE + '; flex-shrink: 0;' +
     '}' +
     '.today-event:last-child { border-bottom: none; margin-bottom: 0; }' +
     '.today-evt-time {' +
@@ -1719,7 +1687,7 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     '  color: rgba(255,255,255,0.65); line-height: 1.2;' +
     '}' +
     '.today-evt-title {' +
-    '  font-size: '  + evtTitleFont + 'px; font-weight: 600; color: rgba(255,255,255,0.92);' +
+    '  font-size: '  + evtTitleFont + 'px; font-weight: 600; color: ' + TEXT_PRIMARY + ';' +
     '  line-height: 1.3;' +
     '  overflow: hidden;' + // Change to 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;' to suppress wrapping
     '}' +
@@ -1731,7 +1699,7 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     // ── DAY COLUMN BODIES (grid row 2, cols 2+) ──
     // Rounded bottom corners complete the visual column started by day-col-header.
     '.day-col-body {' +
-    '  background: rgba(255,255,255,0.03);' +
+    '  background: ' + CARD_RECESSED + ';' +
     '  border-radius: 0 0 6px 6px;' +
     '  overflow: hidden; min-height: 0;' +
     '  padding: ' + Math.floor(pad * 0.32) + 'px;' +
@@ -2016,8 +1984,8 @@ function buildStripLayout(events, displayDates, layout, layoutKey, darkBg) {
     '*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }' +
     'html, body {' +
     '  width: '  + width  + 'px; height: ' + height + 'px;' +
-    '  overflow: hidden; background: ' + (darkBg || layoutKey === 'full' ? DARK_BG_COLOR : 'transparent') + '; color: rgba(255,255,255,0.92);' +
-    '  font-family: "Segoe UI", Arial, Helvetica, sans-serif;' +
+    '  overflow: hidden; background: ' + (darkBg || layoutKey === 'full' ? DARK_BG_COLOR : 'transparent') + '; color: ' + TEXT_PRIMARY + ';' +
+    '  font-family: ' + FONT_STACK + ';' +
     '}' +
     '.strip {' +
     '  width: '   + width  + 'px; height: ' + height + 'px;' +
@@ -2037,8 +2005,8 @@ function buildStripLayout(events, displayDates, layout, layoutKey, darkBg) {
     '  width: '        + dateColWidth + 'px; flex-shrink: 0;' +
     '  padding-right: ' + Math.floor(pad * 0.5) + 'px;' +
     '  padding-top: '   + Math.floor(pad * 0.05) + 'px;' +
-    '  border-right: 2px solid rgba(255,255,255,0.10);' +
-    '  font-size: '    + dayHeadFont + 'px; font-weight: 700; color: rgba(255,255,255,0.68);' +
+    '  border-right: 2px solid ' + BORDER_SUBTLE + ';' +
+    '  font-size: '    + dayHeadFont + 'px; font-weight: 700; color: ' + TEXT_SECONDARY + ';' +
     '  line-height: 1.3;' +
     '}' +
 
@@ -2176,12 +2144,12 @@ function renderErrorPage(title, subtitle, layout, darkBg) {
     '  width: ' + width + 'px; height: ' + height + 'px;' +
     '  overflow: hidden;' +
     '  background: ' + (darkBg ? DARK_BG_COLOR : 'transparent') + ';' +
-    '  font-family: "Segoe UI", Arial, Helvetica, sans-serif;' +
+    '  font-family: ' + FONT_STACK + ';' +
     '  display: flex; align-items: center; justify-content: center;' +
     '}' +
     '.err-wrap { display: flex; flex-direction: column; align-items: center; gap: ' + Math.floor(subFont * 0.6) + 'px; text-align: center; }' +
-    '.err-title { font-size: ' + titleFont + 'px; font-weight: 700; color: #C8102E; letter-spacing: 0.06em; }' +
-    '.err-sub   { font-size: ' + subFont   + 'px; color: rgba(255,255,255,0.92); }' +
+    '.err-title { font-size: ' + titleFont + 'px; font-weight: 700; color: ' + ACCENT_COLOR + '; letter-spacing: 0.06em; }' +
+    '.err-sub   { font-size: ' + subFont   + 'px; color: ' + TEXT_PRIMARY + '; }' +
     '</style>' +
     '</head>' +
     '<body>' +
