@@ -204,7 +204,7 @@ export default {
     // Matches the probationary-firefighter-display ?bg=dark parameter behaviour.
     const darkBg = sanitizeParam(url.searchParams.get('bg')) === 'dark';
 
-    var REQUIRED_SECRETS = ['NEXTCLOUD_URL', 'NEXTCLOUD_USERNAME', 'NEXTCLOUD_PASSWORD', 'NWS_USER_AGENT'];
+    var REQUIRED_SECRETS = ['NEXTCLOUD_URL', 'NEXTCLOUD_USERNAME', 'NEXTCLOUD_PASSWORD'];
     for (var i = 0; i < REQUIRED_SECRETS.length; i++) {
       var key = REQUIRED_SECRETS[i];
       if (!env[key]) {
