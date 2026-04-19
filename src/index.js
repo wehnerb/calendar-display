@@ -1,3 +1,5 @@
+import { fetchWithTimeout } from './shared/fetch-helpers.js';
+
 // =============================================================================
 // calendar-display — Cloudflare Worker
 // =============================================================================
@@ -22,6 +24,13 @@
 //   - Local timestamps with TZID parameter use the specified timezone
 //   - Floating timestamps (no Z, no TZID) are treated as Central time
 //   - All-day events (date-only DTSTART) are handled as full-day entries
+//
+// ICS recurring event handling:
+//   The ICS parser handles DTSTART, DTEND, SUMMARY, and LOCATION only.
+//   RRULE (recurring event rules) are not parsed. Recurring events must
+//   be expanded to individual instances by the Outlook VBA macro at
+//   export time. If recurring events stop appearing, confirm with IT
+//   that the macro is exporting expanded instances rather than RRULE-only.
 //
 // NWS weather data (wide/full layouts only):
 //   - Daily forecast: high/low temp, condition emoji, wind per day column.
@@ -194,6 +203,15 @@ export default {
     // ?bg=dark renders with a solid dark background for browser-based testing.
     // Matches the probationary-firefighter-display ?bg=dark parameter behaviour.
     const darkBg = sanitizeParam(url.searchParams.get('bg')) === 'dark';
+
+    var REQUIRED_SECRETS = ['NEXTCLOUD_URL', 'NEXTCLOUD_USERNAME', 'NEXTCLOUD_PASSWORD'];
+    for (var i = 0; i < REQUIRED_SECRETS.length; i++) {
+      var key = REQUIRED_SECRETS[i];
+      if (!env[key]) {
+        console.error('[calendar-display] Missing required secret: ' + key);
+        return renderErrorPage('CONFIGURATION ERROR', 'Missing secret: ' + key, layout, darkBg);
+      }
+    }
 
     // wide/full → split view with weather.  split/tri → upcoming strip, no weather.
     const useStrip = (layoutKey === 'split' || layoutKey === 'tri');
@@ -424,11 +442,19 @@ function formatHourOnly(date) {
 //                        main Nextcloud account.
 
 async function fetchIcsFromNextcloud(nextcloudUrl, username, password) {
+  if (!nextcloudUrl || !nextcloudUrl.startsWith('https://')) {
+    console.error(
+      'fetchIcsFromNextcloud: NEXTCLOUD_URL is missing or does not start ' +
+      'with https://. Credentials will not be sent over an insecure connection.'
+    );
+    return null;
+  }
+
   // Encode credentials as Base64 for the HTTP Basic Authorization header.
   // btoa() is available natively in Cloudflare Workers.
   const credentials = btoa(username + ':' + password);
 
-  const res = await fetch(nextcloudUrl, {
+  const res = await fetchWithTimeout(nextcloudUrl, {
     method:  'GET',
     headers: {
       'Authorization': 'Basic ' + credentials,
@@ -437,7 +463,7 @@ async function fetchIcsFromNextcloud(nextcloudUrl, username, password) {
     // Worker always retrieves the current file from Nextcloud rather than
     // a stale cached copy. The Workers Cache API handles page-level caching.
     cf: { cacheTtl: 0 },
-  });
+  }, 8000);
 
   if (!res.ok) {
     // Log the status server-side without exposing credentials or the URL.
@@ -474,10 +500,10 @@ async function fetchNwsDaily(userAgent) {
     '/forecast'
   );
   try {
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       headers: { 'User-Agent': userAgent, 'Accept': 'application/geo+json' },
       cf: { cacheTtl: NWS_FORECAST_CACHE_SECONDS },
-    });
+    }, 8000);
     if (!res.ok) {
       console.error('NWS daily forecast fetch failed (' + res.status + ')');
       return null;
@@ -500,10 +526,10 @@ async function fetchNwsHourly(userAgent) {
     '/forecast/hourly'
   );
   try {
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       headers: { 'User-Agent': userAgent, 'Accept': 'application/geo+json' },
       cf: { cacheTtl: NWS_FORECAST_CACHE_SECONDS },
-    });
+    }, 8000);
     if (!res.ok) {
       console.error('NWS hourly forecast fetch failed (' + res.status + ')');
       return null;
@@ -522,10 +548,10 @@ async function fetchNwsHourly(userAgent) {
 async function fetchNwsAlerts(userAgent) {
   const url = 'https://api.weather.gov/alerts/active?zone=' + NWS_ALERT_ZONE;
   try {
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       headers: { 'User-Agent': userAgent, 'Accept': 'application/geo+json' },
       cf: { cacheTtl: NWS_ALERTS_CACHE_SECONDS },
-    });
+    }, 8000);
     if (!res.ok) {
       console.error('NWS alerts fetch failed (' + res.status + ')');
       return null;
