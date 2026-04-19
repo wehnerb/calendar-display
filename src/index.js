@@ -1512,7 +1512,7 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
       ? '.cal-label {' +
         '  font-size: '     + labelFont + 'px; font-weight: 700;' +
         '  letter-spacing: 0.2em; text-transform: uppercase;' +
-        '  color: rgba(255,255,255,0.75); text-align: center;' +
+        '  color: ' + ACCENT_COLOR + '; text-align: center;' +
         '  height: '        + labelHeight + 'px;' +
         '  line-height: '   + labelHeight + 'px;' +
         '  flex-shrink: 0;' +
