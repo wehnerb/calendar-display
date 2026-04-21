@@ -1510,7 +1510,7 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     // "FFD Calendar" title — full layout only.
     (showLabel
       ? '.cal-label {' +
-        '  font-size: '     + labelFont + 'px; font-weight: 900;' +
+        '  font-size: '     + labelFont + 'px; font-weight: 700;' +
         '  letter-spacing: 0.2em; text-transform: uppercase;' +
         '  color: ' + ACCENT_COLOR + '; text-align: center;' +
         '  height: '        + labelHeight + 'px;' +
