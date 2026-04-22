@@ -169,7 +169,7 @@ const NWS_ALERTS_CACHE_SECONDS = 900;
 // hourly strip in the today panel, active alert banners, and future alert badges.
 // Set to false to hide all weather entirely — only the calendar is shown.
 // Only affects wide/full layouts; split/tri never show weather regardless.
-const SHOW_WEATHER = true;
+const SHOW_WEATHER = false;
 
 
 // =============================================================================
