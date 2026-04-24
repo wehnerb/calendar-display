@@ -187,6 +187,77 @@ export default {
     // Parse and validate the layout URL parameter before the try block so
     // the error page renderer always has a valid layout to work with.
     const url         = new URL(request.url);
+
+    if (url.pathname === '/healthz') {
+      var healthStatus = 'healthy';
+      var details = [];
+
+      try {
+        var nwsProbeRes = await fetchWithTimeout(
+          'https://api.weather.gov/',
+          {
+            headers: {
+              'User-Agent': env.NWS_USER_AGENT || 'FFD-Station-Display/1.0',
+              'Accept': 'application/json',
+            },
+          },
+          5000
+        );
+        if (nwsProbeRes.ok || nwsProbeRes.status === 200) {
+          details.push('nws: reachable');
+        } else {
+          healthStatus = 'degraded';
+          details.push('nws: unexpected status ' + nwsProbeRes.status);
+        }
+      } catch (e) {
+        healthStatus = 'degraded';
+        details.push('nws: unreachable (' + (e && e.message ? e.message : String(e)) + ')');
+      }
+
+      try {
+        var nextcloudUrl = env.NEXTCLOUD_URL || '';
+        if (!nextcloudUrl) {
+          details.push('nextcloud: secret not configured');
+        } else {
+          var ncProbeRes = await fetchWithTimeout(
+            nextcloudUrl,
+            {
+              method: 'HEAD',
+              headers: {
+                'Authorization': 'Basic ' + btoa(
+                  (env.NEXTCLOUD_USERNAME || '') + ':' +
+                  (env.NEXTCLOUD_PASSWORD || '')
+                ),
+              },
+            },
+            5000
+          );
+          if (ncProbeRes.ok || ncProbeRes.status === 207 || ncProbeRes.status === 401) {
+            details.push('nextcloud: reachable');
+          } else {
+            healthStatus = 'degraded';
+            details.push('nextcloud: unexpected status ' + ncProbeRes.status);
+          }
+        }
+      } catch (e) {
+        healthStatus = 'degraded';
+        details.push('nextcloud: unreachable (' + (e && e.message ? e.message : String(e)) + ')');
+      }
+
+      return new Response(
+        'status: ' + healthStatus + '\n' +
+        'worker: calendar-display\n' +
+        details.join('\n') + '\n',
+        {
+          status: healthStatus === 'healthy' ? 200 : 503,
+          headers: {
+            'Content-Type':  'text/plain; charset=UTF-8',
+            'Cache-Control': 'no-store',
+          },
+        }
+      );
+    }
+
     const layoutParam = sanitizeParam(url.searchParams.get('layout')) || DEFAULT_LAYOUT;
     const layoutKey   = (layoutParam in LAYOUTS) ? layoutParam : DEFAULT_LAYOUT;
     const layout      = LAYOUTS[layoutKey];
