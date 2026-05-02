@@ -1661,7 +1661,7 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
 
     // Shared weather rows — CSS omitted entirely when SHOW_WEATHER is false.
     (SHOW_WEATHER
-      ? '.hdr-hl { font-size: ' + colWxFont + 'px; font-weight: 700; color: ' + TEXT_PRIMARY + '; }' +
+      ? '.hdr-hl { font-size: ' + colWxFont + 'px; font-weight: 700; color: ' + TEXT_PRIMARY + '; font-variant-numeric:tabular-nums; }' +
         '.hdr-hl .hi { color: #f0a060; }' +
         '.hdr-hl .lo { color: #80c8f0; }' +
         '.hdr-cond {' +
@@ -1719,12 +1719,12 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
         '}' +
         '.wx-time {' +
         '  font-size: '  + wxTimeFont + 'px; color: rgba(255,255,255,0.65);' +
-        '  font-weight: 700; line-height: 1; margin-bottom: 3px;' +
+        '  font-weight: 700; line-height: 1; margin-bottom: 3px; font-variant-numeric:tabular-nums;' +
         '}' +
         '.wx-time.now-label { color: #f0a060; letter-spacing: 0.05em; }' +
         '.wx-temp {' +
         '  font-size: '  + wxTempFont + 'px; font-weight: 700;' +
-        '  color: ' + TEXT_PRIMARY + '; line-height: 1; margin-bottom: 2px;' +
+        '  color: ' + TEXT_PRIMARY + '; line-height: 1; margin-bottom: 2px; font-variant-numeric:tabular-nums;' +
         '}' +
         // .wx-emoji is now a container for an inline SVG — no font-size needed.
         // display:flex + align-items:center keeps the SVG centered in the slot.
@@ -1761,7 +1761,7 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
     '.today-event:last-child { border-bottom: none; margin-bottom: 0; }' +
     '.today-evt-time {' +
     '  font-size: '  + evtTimeFont + 'px; font-weight: 700;' +
-    '  color: rgba(255,255,255,0.65); line-height: 1.2;' +
+    '  color: rgba(255,255,255,0.65); line-height: 1.2; font-variant-numeric:tabular-nums;' +
     '}' +
     '.today-evt-title {' +
     '  font-size: '  + evtTitleFont + 'px; font-weight: 600; color: ' + TEXT_PRIMARY + ';' +
@@ -2109,7 +2109,7 @@ function buildStripLayout(events, displayDates, layout, layoutKey, darkBg) {
     '}' +
     '.event-time {' +
     '  width: '         + timeColWidth + 'px; flex-shrink: 0;' +
-    '  font-size: '     + timeFont + 'px; color: rgba(255,255,255,0.65); font-weight: 600;' +
+    '  font-size: '     + timeFont + 'px; color: rgba(255,255,255,0.65); font-weight: 600; font-variant-numeric:tabular-nums;' +
     '}' +
     '.event-title {' +
     '  flex: 1; min-width: 0;' +
