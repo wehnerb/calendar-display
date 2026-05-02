@@ -179,9 +179,13 @@ const SHOW_WEATHER = false;
 export default {
   async fetch(request, env) {
 
-    // Reject non-GET requests with a generic error to reduce attack surface.
-    if (request.method !== 'GET') {
-      return new Response('Method not allowed', { status: 405 });
+    // Allow GET and HEAD (HEAD is used by UptimeRobot health monitoring).
+    // All other methods are rejected to reduce attack surface.
+    if (request.method !== 'GET' && request.method !== 'HEAD') {
+      return new Response('Method not allowed', {
+        status: 405,
+        headers: { 'Allow': 'GET, HEAD' },
+      });
     }
 
     // Parse and validate the layout URL parameter before the try block so
@@ -244,10 +248,12 @@ export default {
         details.push('nextcloud: unreachable (' + (e && e.message ? e.message : String(e)) + ')');
       }
 
-      return new Response(
+      const healthBody =
         'status: ' + healthStatus + '\n' +
         'worker: calendar-display\n' +
-        details.join('\n') + '\n',
+        details.join('\n') + '\n';
+      return new Response(
+        request.method === 'HEAD' ? null : healthBody,
         {
           status: healthStatus === 'healthy' ? 200 : 503,
           headers: {
