@@ -236,8 +236,11 @@ export default {
             },
             5000
           );
-          if (ncProbeRes.ok || ncProbeRes.status === 207 || ncProbeRes.status === 401) {
+          if (ncProbeRes.ok || ncProbeRes.status === 207) {
             details.push('nextcloud: reachable');
+          } else if (ncProbeRes.status === 401 || ncProbeRes.status === 403) {
+            healthStatus = 'degraded';
+            details.push('nextcloud: authentication failed (' + ncProbeRes.status + ') — check NEXTCLOUD_PASSWORD');
           } else {
             healthStatus = 'degraded';
             details.push('nextcloud: unexpected status ' + ncProbeRes.status);
