@@ -95,7 +95,7 @@ const CACHE_SECONDS = 900;
 // Increment this integer to immediately invalidate all cached pages.
 // Useful after configuration changes that affect the rendered output,
 // such as updating ALLDAY_COLORS, FILTER_EXACT, or DAYS_TO_SHOW.
-const CACHE_VERSION = 23;
+const CACHE_VERSION = 24;
 
 // Default layout when no ?layout= parameter is provided.
 // Options: 'full', 'wide', 'split', 'tri'
@@ -141,8 +141,14 @@ const NWS_OFFICE   = 'FGF';
 const NWS_GRID_X   = 65;
 const NWS_GRID_Y   = 57;
 
-// NWS public zone code for Cass County, ND — used for the alerts endpoint.
-const NWS_ALERT_ZONE = 'NDZ039';
+// NWS_COUNTY_CODE is used for alert queries rather than NWS_ALERT_ZONE because
+// SPC-issued county-based alerts (Tornado Watch, Severe Thunderstorm Watch) are
+// NOT returned when querying by NWS forecast zone (?zone=NDZ039). Querying by
+// county zone (?zone=NDC017) returns BOTH county-based alerts and all zone-based
+// alerts mapped to Cass County, making it fully comprehensive.
+// NWS Geolocation primer: https://www.weather.gov/media/documentation/docs/NWS_Geolocation.pdf
+const NWS_ALERT_ZONE  = 'NDZ039';  // Cass County NWS forecast zone (retained for reference)
+const NWS_COUNTY_CODE = 'NDC017';  // Cass County ND FIPS county zone — used for alert queries
 
 // How many hourly periods to skip between slots in the today panel strip.
 // 2 = show every other hour (NOW, 2 PM, 4 PM, 6 PM...).
@@ -613,11 +619,14 @@ async function fetchNwsHourly(userAgent) {
   }
 }
 
-// Fetches active weather alerts for the configured Cass County zone (NDZ039).
+// Fetches active weather alerts for Cass County, ND.
+// Queries by county zone (NDC017) rather than forecast zone (NDZ039) so that
+// county-based alerts — Tornado Watch and Severe Thunderstorm Watch — are included.
+// County-zone queries also return all zone-based alerts mapped to the county.
 // Returns the features array or null on failure.
 // Edge-cached for NWS_ALERTS_CACHE_SECONDS (matches page cache interval).
 async function fetchNwsAlerts(userAgent) {
-  const url = 'https://api.weather.gov/alerts/active?zone=' + NWS_ALERT_ZONE;
+  const url = 'https://api.weather.gov/alerts/active?zone=' + NWS_COUNTY_CODE;
   try {
     const res = await fetchWithTimeout(url, {
       headers: { 'User-Agent': userAgent, 'Accept': 'application/geo+json' },
@@ -942,8 +951,12 @@ function getBadgeAlertsForDate(alertFeatures, dateStr, todayStr, now) {
     if (p.status !== 'Actual')        return false;
     if (p.messageType === 'Cancel')   return false;
 
-    const onset   = p.onset   ? new Date(p.onset)   : null;
-    const expires = p.expires ? new Date(p.expires) : null;
+    const onset      = p.onset   ? new Date(p.onset)   : null;
+    // Some SPC-issued products (e.g. Tornado Watch) may populate 'ends' instead of
+    // 'expires'. Fall back to 'ends' here so these alerts are not silently rejected
+    // before reaching the date-range logic below (which already prefers 'ends').
+    const expiresRaw = p.expires || p.ends || null;
+    const expires     = expiresRaw ? new Date(expiresRaw) : null;
     if (!onset || !expires)           return false;
     if (expires <= now)               return false; // product already superseded
 
@@ -974,8 +987,11 @@ function getActiveAlerts(alertFeatures, now) {
   return alertFeatures.filter(function(f) {
     const p = f.properties;
     if (!p || p.status !== 'Actual' || p.messageType === 'Cancel') return false;
-    const onset   = p.onset   ? new Date(p.onset)   : null;
-    const expires = p.expires ? new Date(p.expires) : null;
+    const onset      = p.onset   ? new Date(p.onset)   : null;
+    // Fall back to 'ends' when 'expires' is absent — see getBadgeAlertsForDate
+    // above for the same fix and rationale.
+    const expiresRaw = p.expires || p.ends || null;
+    const expires     = expiresRaw ? new Date(expiresRaw) : null;
     if (!onset || !expires) return false;
     return onset <= now && expires > now;
   });
