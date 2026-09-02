@@ -1954,7 +1954,7 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
   // --- Build today body HTML ---
   // Hourly weather strip.
   let wxStripHtml = '';
-  if (hourlySlots.length > 0) {
+  if (SHOW_WEATHER && hourlySlots.length > 0) {
     wxStripHtml = '<div class="wx-strip">';
     for (let i = 0; i < hourlySlots.length; i++) {
       const slot    = hourlySlots[i];
@@ -2009,7 +2009,7 @@ function buildSplitLayout(events, displayDates, layout, layoutKey, dailyPeriods,
 
   const todayBodyHtml = (
     '<div class="left-body">' +
-      wxStripHtml +
+      (SHOW_WEATHER ? wxStripHtml : '') +
       '<div class="today-events">' + todayEventsHtml + '</div>' +
     '</div>'
   );
