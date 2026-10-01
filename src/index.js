@@ -61,6 +61,18 @@ import { ALERT_WARNING_BG, ALERT_WARNING_BORDER, ALERT_WARNING_TEXT, ALERT_WATCH
 //   - Increment CACHE_VERSION to immediately invalidate all cached pages.
 //   - Cache-Control: no-store on HTML responses prevents browser caching.
 //
+// CPU budget (Workers Free plan allows 10 ms CPU per request):
+//   - The page cache above is per Cloudflare data center, so every data center
+//     that serves a display rebuilds the page once per CACHE_SECONDS. That
+//     rebuild (cache miss) is the only expensive path and must stay small.
+//   - Intl.DateTimeFormat objects are expensive to construct. They are created
+//     ONCE at module level (see DATE AND TIME HELPERS) and reused. Never
+//     construct one inside a function that runs per event or per request.
+//   - The ICS export covers ~30 days but only DAYS_TO_SHOW days are shown.
+//     parseIcs() receives a date window and skips events outside it using the
+//     raw date text, before any timezone conversion or unescaping is done.
+//   - /healthz is not cached; keep it free of heavy work.
+//
 // Calendar update workflow:
 //   - Outlook VBA macro exports FFD Calendar to a local folder on startup.
 //   - Nextcloud desktop app syncs that folder automatically.
@@ -95,7 +107,7 @@ const CACHE_SECONDS = 900;
 // Increment this integer to immediately invalidate all cached pages.
 // Useful after configuration changes that affect the rendered output,
 // such as updating ALLDAY_COLORS, FILTER_EXACT, or DAYS_TO_SHOW.
-const CACHE_VERSION = 24;
+const CACHE_VERSION = 25;
 
 // Default layout when no ?layout= parameter is provided.
 // Options: 'full', 'wide', 'split', 'tri'
@@ -202,26 +214,35 @@ export default {
       var healthStatus = 'healthy';
       var details = [];
 
-      try {
-        var nwsProbeRes = await fetchWithTimeout(
-          'https://api.weather.gov/',
-          {
-            headers: {
-              'User-Agent': env.NWS_USER_AGENT || 'FFD-Station-Display/1.0',
-              'Accept': 'application/json',
+      // NWS is only used when SHOW_WEATHER is true, so it is only health-checked
+      // in that case. With weather disabled an NWS outage cannot affect the
+      // display and must not turn this endpoint (and the UptimeRobot monitor)
+      // into a false "degraded" alert. Flip SHOW_WEATHER to true and the probe
+      // resumes automatically - no other change is needed.
+      if (SHOW_WEATHER) {
+        try {
+          var nwsProbeRes = await fetchWithTimeout(
+            'https://api.weather.gov/',
+            {
+              headers: {
+                'User-Agent': env.NWS_USER_AGENT || 'FFD-Station-Display/1.0',
+                'Accept': 'application/json',
+              },
             },
-          },
-          5000
-        );
-        if (nwsProbeRes.ok || nwsProbeRes.status === 200) {
-          details.push('nws: reachable');
-        } else {
+            5000
+          );
+          if (nwsProbeRes.ok || nwsProbeRes.status === 200) {
+            details.push('nws: reachable');
+          } else {
+            healthStatus = 'degraded';
+            details.push('nws: unexpected status ' + nwsProbeRes.status);
+          }
+        } catch (e) {
           healthStatus = 'degraded';
-          details.push('nws: unexpected status ' + nwsProbeRes.status);
+          details.push('nws: unreachable (' + (e && e.message ? e.message : String(e)) + ')');
         }
-      } catch (e) {
-        healthStatus = 'degraded';
-        details.push('nws: unreachable (' + (e && e.message ? e.message : String(e)) + ')');
+      } else {
+        details.push('nws: skipped (SHOW_WEATHER is false)');
       }
 
       try {
@@ -358,15 +379,19 @@ export default {
         );
       }
 
-      // Parse the ICS text into structured event objects.
-      const allEvents = parseIcs(icsText);
+      // Build the ordered list of date strings to display in Central time.
+      // This is computed BEFORE parsing so the parser can skip every event that
+      // falls outside the displayed days (the export covers ~30 days; only
+      // DAYS_TO_SHOW are shown).
+      const todayStr     = getTodayString();
+      const displayDates = getDisplayDates(todayStr, DAYS_TO_SHOW);
+
+      // Parse the ICS text into structured event objects, limited to the window.
+      const icsWindow = getIcsDateWindow(displayDates, ICS_WINDOW_BUFFER_DAYS);
+      const allEvents = parseIcs(icsText, icsWindow);
 
       // Apply filter rules before rendering.
       const events = applyFilters(allEvents);
-
-      // Build the ordered list of date strings to display in Central time.
-      const todayStr     = getTodayString();
-      const displayDates = getDisplayDates(todayStr, DAYS_TO_SHOW);
 
       // Render the appropriate layout design.
       const html = useStrip
@@ -414,16 +439,81 @@ export default {
 // DATE AND TIME HELPERS
 // =============================================================================
 
+// Time zone used for every date/time shown on the display (observes DST).
+const CENTRAL_TZ = 'America/Chicago';
+
+// Reusable formatters. Constructing an Intl.DateTimeFormat is expensive in CPU
+// terms, so each distinct format is built ONCE here when the Worker loads and
+// reused for every call. format() is stateless, so sharing is safe.
+
+// YYYY-MM-DD in Central time (the en-CA locale yields ISO ordering natively).
+const FMT_DATE_ISO = new Intl.DateTimeFormat('en-CA', {
+  timeZone: CENTRAL_TZ,
+  year:     'numeric',
+  month:    '2-digit',
+  day:      '2-digit',
+});
+
+// Short date label, e.g. "Mon 3/18".
+const FMT_DATE_SHORT = new Intl.DateTimeFormat('en-US', {
+  timeZone: CENTRAL_TZ,
+  weekday:  'short',
+  month:    'numeric',
+  day:      'numeric',
+});
+
+// 12-hour time with minutes, e.g. "9:00 AM". Used for event times and alert times.
+const FMT_TIME_12H = new Intl.DateTimeFormat('en-US', {
+  timeZone: CENTRAL_TZ,
+  hour:     'numeric',
+  minute:   '2-digit',
+  hour12:   true,
+});
+
+// Hour only, e.g. "2 PM". Used for the hourly weather strip labels.
+const FMT_HOUR_12H = new Intl.DateTimeFormat('en-US', {
+  timeZone: CENTRAL_TZ,
+  hour:     'numeric',
+  hour12:   true,
+});
+
+// Full weekday name, e.g. "Thursday". Used in alert expiry labels.
+const FMT_WEEKDAY_LONG = new Intl.DateTimeFormat('en-US', {
+  timeZone: CENTRAL_TZ,
+  weekday:  'long',
+});
+
+// Number of extra days kept on each side of the displayed days when filtering
+// ICS events by raw date text. The raw date in the file is in the event's own
+// time zone (or UTC) and can differ from the Central calendar date by one day,
+// so a one-day buffer guarantees no visible event is ever skipped.
+const ICS_WINDOW_BUFFER_DAYS = 1;
+
+// Returns a YYYY-MM-DD string shifted by the given number of days (may be negative).
+// Works at noon UTC so adding days never crosses a DST boundary.
+function shiftDateStr(dateStr, days) {
+  const d = new Date(dateStr + 'T12:00:00Z');
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().substring(0, 10);
+}
+
+// Builds the inclusive date window used to skip out-of-range ICS events.
+// Returns { minKey, maxKey } as YYYYMMDD strings (the same 8-digit form used
+// at the start of ICS date values), so keys compare with plain string order.
+function getIcsDateWindow(displayDates, bufferDays) {
+  const first = shiftDateStr(displayDates[0], -bufferDays);
+  const last  = shiftDateStr(displayDates[displayDates.length - 1], bufferDays);
+  return {
+    minKey: first.replace(/-/g, ''),
+    maxKey: last.replace(/-/g, ''),
+  };
+}
+
 // Returns today's date string (YYYY-MM-DD) in America/Chicago time.
 // Uses Intl.DateTimeFormat for correct DST handling.
 // The en-CA locale produces YYYY-MM-DD format natively.
 function getTodayString() {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/Chicago',
-    year:     'numeric',
-    month:    '2-digit',
-    day:      '2-digit',
-  }).format(new Date());
+  return FMT_DATE_ISO.format(new Date());
 }
 
 // Returns an array of `count` date strings (YYYY-MM-DD) starting from todayStr.
@@ -443,55 +533,31 @@ function getDisplayDates(todayStr, count) {
 // Formats a YYYY-MM-DD string as a short label, e.g. "Mon 3/18".
 function formatDateShort(dateStr) {
   const d = new Date(dateStr + 'T12:00:00Z');
-  return new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/Chicago',
-    weekday:  'short',
-    month:    'numeric',
-    day:      'numeric',
-  }).format(d);
+  return FMT_DATE_SHORT.format(d);
 }
 
 // Formats a JS Date as a 12-hour time string, e.g. "9:00 AM".
 function formatTime(date) {
-  return new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/Chicago',
-    hour:     'numeric',
-    minute:   '2-digit',
-    hour12:   true,
-  }).format(date);
+  return FMT_TIME_12H.format(date);
 }
 
 // Returns the YYYY-MM-DD date string for a JS Date in Central time.
 function toLocalDateStr(date) {
   if (!date) return '';
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/Chicago',
-    year:     'numeric',
-    month:    '2-digit',
-    day:      '2-digit',
-  }).format(date);
+  return FMT_DATE_ISO.format(date);
 }
 
 // Formats an NWS hourly period start time as a short hour label, e.g. "2 PM".
 // NWS hourly periods always start on the hour so the minute is always :00.
 function formatHourLabel(date) {
-  return new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/Chicago',
-    hour:     'numeric',
-    hour12:   true,
-  }).format(date);
+  return FMT_HOUR_12H.format(date);
 }
 
 // Formats a timestamp as a short, clean hour string for alert timing labels.
 // Whole hours: "6 PM". Special cases: "noon", "midnight". With minutes: "6:30 PM".
 function formatHourOnly(date) {
   if (!date) return '';
-  const raw = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/Chicago',
-    hour:     'numeric',
-    minute:   '2-digit',
-    hour12:   true,
-  }).format(date);
+  const raw = FMT_TIME_12H.format(date);
   // Remove ":00" from whole-hour times for cleaner display.
   const clean = raw.replace(':00', '');
   if (clean === '12 PM') return 'noon';
@@ -1061,10 +1127,7 @@ function formatExpiresLabel(expiresStr, todayStr) {
   }
 
   // Expires on a future day — include the day name.
-  const day = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/Chicago',
-    weekday:  'long',
-  }).format(d);
+  const day = FMT_WEEKDAY_LONG.format(d);
   return 'until ' + day + ' ' + timeLabel;
 }
 
@@ -1087,9 +1150,19 @@ function formatExpiresLabel(expiresStr, todayStr) {
 // Lines may be RFC 5545 "folded" (long lines wrapped with leading whitespace);
 // unfolding is applied before parsing.
 
-function parseIcs(icsText) {
-  // Normalize line endings to \n, then unfold folded lines per RFC 5545 §3.1.
-  const normalized = icsText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+// Date window (CPU optimisation):
+// The Nextcloud export covers ~30 days but only a few are displayed. When a
+// dateWindow ({ minKey, maxKey } as YYYYMMDD strings, from getIcsDateWindow())
+// is supplied, each VEVENT is first checked using only the raw 8-digit date at
+// the start of its DTSTART/DTEND text. Events entirely outside the window are
+// dropped BEFORE any timezone conversion, regex unescaping or object building.
+// If dateWindow is omitted, every event is parsed (the original behaviour).
+// An event whose raw date cannot be read is always kept so the full parser
+// decides about it - the filter can only skip events, never mis-place them.
+function parseIcs(icsText, dateWindow) {
+  // Normalize line endings to \n (handles \r\n and bare \r in one pass), then
+  // unfold folded lines per RFC 5545 §3.1.
+  const normalized = icsText.replace(/\r\n?/g, '\n');
   const lines      = unfoldLines(normalized.split('\n'));
 
   const events = [];
@@ -1117,9 +1190,11 @@ function parseIcs(icsText) {
     }
 
     if (propName === 'END' && value === 'VEVENT') {
-      // Only add events that have at least a SUMMARY and a DTSTART.
-      if (current && current.summary !== undefined && current.start) {
-        events.push(current);
+      // finalizeIcsEvent() returns null for events that are incomplete (no
+      // SUMMARY or no usable DTSTART) or outside the date window.
+      if (current) {
+        const finished = finalizeIcsEvent(current, dateWindow);
+        if (finished) events.push(finished);
       }
       current = null;
       continue;
@@ -1127,34 +1202,89 @@ function parseIcs(icsText) {
 
     if (!current) continue;
 
+    // Only store the raw text here. Unescaping and timezone conversion are
+    // deferred to finalizeIcsEvent() so they never run for skipped events.
     switch (propName) {
       case 'SUMMARY':
-        current.summary = unescapeIcs(value);
+        current.rawSummary = value;
         break;
       case 'LOCATION':
-        current.location = unescapeIcs(value);
+        current.rawLocation = value;
         break;
-      case 'DTSTART': {
-        const parsed = parseDatetimeProp(value, propParams);
-        if (parsed) {
-          current.start    = parsed.date;
-          current.allDay   = parsed.allDay;
-          current.startStr = parsed.dateStr;
-        }
+      case 'DTSTART':
+        current.rawStart       = value;
+        current.rawStartParams = propParams;
         break;
-      }
-      case 'DTEND': {
-        const parsed = parseDatetimeProp(value, propParams);
-        if (parsed) {
-          current.end    = parsed.date;
-          current.endStr = parsed.dateStr;
-        }
+      case 'DTEND':
+        current.rawEnd       = value;
+        current.rawEndParams = propParams;
         break;
-      }
     }
   }
 
   return events;
+}
+
+// Returns the leading YYYYMMDD key of an ICS date or date-time value, or null
+// if the value does not start with 8 digits (malformed). No Date objects, no
+// Intl calls, no timezone work - this is the cheap pre-check used for windowing.
+function extractRawDateKey(value) {
+  if (typeof value !== 'string' || !/^\d{8}/.test(value)) return null;
+  return value.substring(0, 8);
+}
+
+// Returns true if an event could appear inside the date window, judged from the
+// raw DTSTART/DTEND text only. The test is deliberately generous (it keeps any
+// event whose raw start..end range overlaps the window) because the window
+// already carries a buffer; the later rendering step does the exact date match.
+// Multi-day all-day events that began before the window but run into it are kept.
+function isRawEventInWindow(rawStart, rawEnd, dateWindow) {
+  const startKey = extractRawDateKey(rawStart);
+  // Unreadable start: keep it and let the full parser decide.
+  if (startKey === null) return true;
+
+  const endKey  = (rawEnd !== undefined) ? extractRawDateKey(rawEnd) : null;
+  // Use the end date only when it is readable and not before the start.
+  const lastKey = (endKey !== null && endKey > startKey) ? endKey : startKey;
+
+  return startKey <= dateWindow.maxKey && lastKey >= dateWindow.minKey;
+}
+
+// Converts the raw text captured for one VEVENT into the event object the rest
+// of the Worker uses: { summary, location?, start, allDay, startStr, end?, endStr? }.
+// Returns null when the event is incomplete (needs a SUMMARY and a usable
+// DTSTART - same rule as before) or lies outside the optional date window.
+function finalizeIcsEvent(raw, dateWindow) {
+  if (raw.rawSummary === undefined || raw.rawStart === undefined) return null;
+
+  // Cheap window check first - skips the expensive work below for most events.
+  if (dateWindow && !isRawEventInWindow(raw.rawStart, raw.rawEnd, dateWindow)) {
+    return null;
+  }
+
+  const startParsed = parseDatetimeProp(raw.rawStart, raw.rawStartParams || '');
+  if (!startParsed) return null;
+
+  const event = {
+    summary:  unescapeIcs(raw.rawSummary),
+    start:    startParsed.date,
+    allDay:   startParsed.allDay,
+    startStr: startParsed.dateStr,
+  };
+
+  if (raw.rawLocation !== undefined) {
+    event.location = unescapeIcs(raw.rawLocation);
+  }
+
+  if (raw.rawEnd !== undefined) {
+    const endParsed = parseDatetimeProp(raw.rawEnd, raw.rawEndParams || '');
+    if (endParsed) {
+      event.end    = endParsed.date;
+      event.endStr = endParsed.dateStr;
+    }
+  }
+
+  return event;
 }
 
 // Unfolds RFC 5545 folded lines. A continuation line starts with a space or tab;
@@ -1230,6 +1360,31 @@ function parseRawDateTime(value) {
   ));
 }
 
+// Cache of Intl.DateTimeFormat objects used by parseLocalDateTimeInZone(),
+// keyed by IANA time zone name. Typically holds one entry (America/Chicago).
+// The size cap protects against an unexpected flood of distinct zone names.
+const ZONE_PARTS_FORMATTERS = new Map();
+const ZONE_PARTS_FORMATTERS_MAX = 16;
+
+// Returns a (cached) formatter that breaks a Date into wall-clock parts in the
+// given IANA zone. Throws RangeError for an invalid zone name, exactly as
+// constructing the formatter inline did before; invalid names are never cached.
+function getZonePartsFormatter(tzid) {
+  let fmt = ZONE_PARTS_FORMATTERS.get(tzid);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: tzid,
+      year:     'numeric', month:  '2-digit', day:    '2-digit',
+      hour:     '2-digit', minute: '2-digit', second: '2-digit',
+      hour12:   false,
+    });
+    if (ZONE_PARTS_FORMATTERS.size < ZONE_PARTS_FORMATTERS_MAX) {
+      ZONE_PARTS_FORMATTERS.set(tzid, fmt);
+    }
+  }
+  return fmt;
+}
+
 // Parses a bare ICS datetime string (YYYYMMDDTHHMMSS) as a wall-clock time
 // in the given IANA timezone. Returns a JS Date representing the correct
 // UTC instant, or null on failure.
@@ -1252,12 +1407,7 @@ function parseLocalDateTimeInZone(value, tzid) {
 
     // Find what wall-clock time that UTC instant shows in the target timezone.
     const parts = {};
-    for (const part of new Intl.DateTimeFormat('en-US', {
-      timeZone: tzid,
-      year:     'numeric', month:  '2-digit', day:    '2-digit',
-      hour:     '2-digit', minute: '2-digit', second: '2-digit',
-      hour12:   false,
-    }).formatToParts(utcApprox)) {
+    for (const part of getZonePartsFormatter(tzid).formatToParts(utcApprox)) {
       if (part.type !== 'literal') parts[part.type] = part.value;
     }
 
@@ -2207,7 +2357,10 @@ function getEventsForDate(events, dateStr) {
       return dateStr >= startStr && dateStr < endStr;
     }
 
-    return toLocalDateStr(event.start) === dateStr;
+    // startStr was computed with toLocalDateStr() when the event was parsed, so
+    // reuse it rather than re-formatting the date for every event on every day.
+    // The fallback keeps the function correct for any event lacking startStr.
+    return (event.startStr || toLocalDateStr(event.start)) === dateStr;
   });
 }
 
